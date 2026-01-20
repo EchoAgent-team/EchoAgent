@@ -1,0 +1,13 @@
+name: ai-agents-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy>=1.24.0          # use Conda's optimized build
+  - pip:
+      - "sqlalchemy>=2.0.0"
+      - "chromadb>=0.4.0"
+      - "sentence-transformers>=2.2.0"
+      - "Pillow>=10.0.0"
