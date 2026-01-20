@@ -1,4 +1,4 @@
-name: ai-agents-env
+name: echoagent-env
 channels:
   - conda-forge
   - defaults
