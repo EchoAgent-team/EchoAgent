@@ -36,7 +36,7 @@ EchoAgent is structured as a modular retrieval system with agent-driven reasonin
 ```mermaid
 flowchart TD
     A[User Prompt] --> B[LLM Reasoning / Orchestration Layer]
-    B --> C[Local Retrieval Engine\nVector + Relational DB]
+    B --> C[Local Retrieval Engine<br/>Vector + Relational DB]
     C -->|Low Recall| D[Tool-Based Enrichment Agents]
     D -->|Cache & Embed| C
     C --> E[Ranking & Assembly Logic]
@@ -126,7 +126,7 @@ A core design component of EchoAgent is a structured mapping layer that translat
 - **LLMs & Embeddings:** Provider-agnostic (e.g., OpenAI, Gemini, Anthropic)
 - **Agent Orchestration (Optional):** LangChain
 - **APIs:** Spotify, Genius, Last.fm
-- **Deployment:** Hugging Face Spaces
+- **Deployment:** Platform-agnostic (e.g., Hugging Face Spaces, GCP)
 
 ---
 
