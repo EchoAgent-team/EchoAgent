@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from sqlalchemy import (
     Column, String, Integer, Float, Text, DateTime, ForeignKey, UniqueConstraint,
-    create_engine, and_, or_
+    create_engine, and_, or_, JSON
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
@@ -111,14 +111,15 @@ class Tag(Base):
 
 
 class Lyric(Base):
-    """Full lyrics text for songs."""
+    """Lyrics or BoW representation for songs."""
     __tablename__ = "lyrics"
 
     id = Column(String, ForeignKey("songs.id", ondelete="CASCADE"), primary_key=True)
-    full_text = Column(Text, nullable=False)
-    source = Column(String, nullable=True)  # e.g., 'genius', 'spotify'
+    full_text = Column(Text, nullable=True)  # Deprecated for copyrighted material
+    bow_vector = Column(JSON, nullable=True)  # MXM BoW e.g. {"0": 3, "42": 1}
+    vocab_size = Column(Integer, nullable=True)
+    source = Column(String, nullable=True)
     language = Column(String, nullable=True)
-
     # Relationship
     song = relationship("Song", back_populates="lyrics")
 

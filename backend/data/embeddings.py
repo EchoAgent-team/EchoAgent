@@ -260,6 +260,24 @@ class EmbeddingManager:
         
         return formatted_results
 
+    def generate_bow_embedding(
+        self,
+        bow_vector: Dict[int, int],
+        vocab: Dict[int, str],
+        model_name: Optional[str] = None
+    ) -> np.ndarray:
+        """
+        Generate embedding from MXM musiXmatch bag-of-words.
+        """
+        words = []
+        for wid, count in sorted(bow_vector.items()):
+            word = vocab.get(wid, f"unk_{wid}")
+            words.extend([word] * min(count, 5))
+        text = " ".join(words[:512])
+        
+        model = self.get_embedding_model(model_name or "all-MiniLM-L6-v2", model_type="text")
+        return model.encode(text, convert_to_numpy=True)
+
 
 # Global instance (can be initialized with custom settings)
 _embedding_manager: Optional[EmbeddingManager] = None
@@ -331,3 +349,12 @@ def query_by_semantics(
     """Query vector database by semantic similarity using global EmbeddingManager."""
     manager = get_embedding_manager()
     return manager.query_by_semantics(query_text, collection, top_k, model_name, where)
+
+def generate_bow_embedding(
+    bow_vector: Dict[int, int], 
+    vocab: Dict[int, str], 
+    model_name: Optional[str] = None
+) -> np.ndarray:
+    """Generate BoW embedding using global EmbeddingManager."""
+    manager = get_embedding_manager()
+    return manager.generate_bow_embedding(bow_vector, vocab, model_name)
