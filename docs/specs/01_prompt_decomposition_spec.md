@@ -1,22 +1,24 @@
-# Prompt Decomposition Specification
+# Prompt Decomposition Specification (VibeIntent)
 
 ## Purpose
 
-This document defines how natural-language user prompts are decomposed into structured attributes for the playlist generation system.
+This document defines how natural-language prompts are decomposed into
+`VibeIntent`, the stable intent contract for the playlist retrieval system.
 
-The goal of prompt decomposition is **not** to generate music or playlists directly, but to convert free-form human language into a **strict, machine-readable intent representation** that downstream systems (retrieval, filtering, ranking) can operate on deterministically.
+The parser does not pick tracks or call data sources. It only converts free-form
+language into a strict, machine-usable intent representation.
 
-This document is the **human-readable design companion** to `prompt_schema.json`, which serves as the machine-enforced contract.
+This spec is the human-readable companion to
+`vibe_intent.md`.
 
 ---
 
 ## Scope
 
 This specification covers:
-- The semantic meaning of each output field
-- How ambiguity is handled
-- How each field is intended to be used downstream (routing)
-- The distinction between hard constraints and soft preferences
+- Meaning of each `VibeIntent` section
+- Ambiguity handling
+- Constraint separation (hard vs soft vs exclusion)
 
 This document does **not** define:
 - Database schemas
@@ -28,185 +30,39 @@ This document does **not** define:
 
 ## Output Contract Overview
 
-The prompt parser must output a JSON object that matches the schema defined in `prompt_schema.json`.
+The parser must output a JSON object with exactly these top-level keys:
 
-All keys must be present in the output.
-Unknown or unspecified information must be represented using `null` (for scalar fields) or `[]` (for list fields).
+- `semantic_query`
+- `hard_constraints`
+- `soft_preferences`
+- `exclusions`
 
-The fields are:
-
-- `mood`
-- `themes`
-- `energy`
-- `tempo_hint_bpm`
-- `instruments`
-- `visuals`
-- `genres`
-- `era`
-- `constraints`
-- `negative_constraints`
-- `confidence`
+```json
+{
+  "semantic_query": "string",
+  "hard_constraints": {},
+  "soft_preferences": {},
+  "exclusions": {}
+}
+```
 
 ---
 
-## Field Definitions and Interpretation
+## Constraint Separation Rules
 
-### mood
-**Type:** list of strings  
-
-Represents the emotional tone or affective quality of the music.
-
-Examples:
-- nostalgic
-- calm
-- melancholic
-- euphoric
-
-Notes:
-- Mood is often implicit and metaphorical.
-- This field should favor semantic interpretation over literal keywords.
+- Put explicit, enforceable requirements in `hard_constraints`.
+- Put ambiguous or preference-like cues in `soft_preferences`.
+- Put explicit “avoid” instructions in `exclusions`.
+- Keep routing and datasource logic out of parser output.
 
 ---
 
-### themes
-**Type:** list of strings  
+## Ambiguity Rules
 
-Represents narrative or conceptual ideas conveyed by the music.
-
-Examples:
-- road_trip
-- heartbreak
-- solitude
-- night_city
-- nature
-
-Notes:
-- Themes often describe *what the music is about* rather than how it feels.
-- Multiple themes may coexist.
-
----
-
-### energy
-**Type:** string or null  
-**Allowed values:** low, medium, high  
-
-Represents perceived intensity or dynamism of the music.
-
-Notes:
-- Energy is qualitative, not numeric.
-- If the prompt implies intensity vaguely, treat as a soft preference.
-- If unclear, use `null`.
-
----
-
-### tempo_hint_bpm
-**Type:** number or null  
-
-Represents an approximate tempo in beats per minute, only when explicitly implied.
-
-Notes:
-- This is a hint, not a command.
-- Do not infer BPM unless clearly stated.
-
----
-
-### instruments
-**Type:** list of strings  
-
-Represents instruments that should be present or emphasized.
-
-Examples:
-- guitar
-- piano
-- synth
-- strings
-
----
-
-### visuals
-**Type:** list of strings  
-
-Represents imagery or visual scenes the music evokes.
-
-Examples:
-- dusk
-- neon_city
-- fog
-- sunset
-- forest
-
----
-
-### genres
-**Type:** list of strings  
-
-Represents musical genres or stylistic categories.
-
-Examples:
-- indie_rock
-- jazz
-- ambient
-- techno
-
----
-
-### era
-**Type:** list of strings  
-
-Represents a historical period or decade.
-
-Examples:
-- 80s
-- 90s
-- early_2000s
-
----
-
-### constraints
-**Type:** list of strings  
-
-Represents additional requirements or preferences.
-
-Examples:
-- instrumental_only
-- minimal_vocals
-- acoustic_focus
-
----
-
-### negative_constraints
-**Type:** list of strings  
-
-Represents explicit exclusions.
-
-Examples:
-- no_edm
-- avoid_love_songs
-- no_vocals
-
----
-
-### confidence
-**Type:** string or null  
-**Allowed values:** low, medium, high  
-
-Represents how confident the parser is in the extracted attributes.
-
----
-
-## Hard vs Soft Interpretation
-
-Explicit, unambiguous instructions are treated as hard constraints.
-Vague or metaphorical language is treated as soft preferences.
-
----
-
-## Field → Retrieval Routing (Conceptual)
-
-- Vector search: mood, themes, visuals
-- Filters: genres, instruments, tempo_hint_bpm, energy (explicit)
-- Exclusions: negative_constraints
-- Ranking: constraints (soft), energy (vague), era, confidence
+- If language is explicit and measurable, treat it as hard.
+- If language is metaphorical or uncertain, treat it as soft.
+- Do not invent unsupported fields or values.
+- If a nested field is unknown, leave it out of the nested object.
 
 ---
 
@@ -219,10 +75,34 @@ Vague or metaphorical language is treated as soft preferences.
 
 ---
 
+## Example
+
+Prompt:
+
+`Late-night neon city drive, synth-heavy, medium energy, no EDM.`
+
+Expected `VibeIntent`:
+
+```json
+{
+  "semantic_query": "late-night neon city drive synth-heavy medium energy no edm",
+  "hard_constraints": {
+    "instruments_include": ["synth"],
+    "energy": "medium"
+  },
+  "soft_preferences": {
+    "themes": ["driving", "night_city"]
+  },
+  "exclusions": {
+    "genres_exclude": ["edm"]
+  }
+}
+```
+
+---
+
 ## Success Criteria
 
-A prompt is successfully parsed if:
-- Output matches schema exactly
-- All keys are present
-- No unsupported information is introduced
-- Ambiguity is handled using nulls and confidence
+- Output always uses the 4-key `VibeIntent` shape.
+- Hard constraints, soft preferences, and exclusions are separated consistently.
+- No unsupported/guessed values are invented.

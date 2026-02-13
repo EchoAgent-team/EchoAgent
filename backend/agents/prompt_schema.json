@@ -1,41 +1,26 @@
-{   
-    "_definitions":{
-        "mood": "The emotional tone or the atmosphere of the music, such as happy, sad, energetic, calm, etc.",
-        "themes": "The central topics or ideas that the music is intended to convey, such as love, adventure, mystery, etc.",
-        "energy": "The intensity and dynamism of the music, which can be categorized as low, medium, or high.",
-        "tempo_hint_bpm": "A suggested tempo for the music in beats per minute (BPM), which can help set the pace and rhythm.",
-        "instruments": "The specific musical instruments that should be featured in the composition, such as guitar, piano, drums, etc.",
-        "visuals": "The imagery or visual elements that the music is intended to evoke or complement, such as nature scenes, urban landscapes, abstract art, etc.",
-        "genres": "The musical styles or categories that the composition should align with, such as rock, jazz, classical, etc.",
-        "era": "The historical period or decade that the music should reflect, such as the 80s, 90s, 2000s, etc.",
-        "constraints": "Any specific requirements or limitations that need to be considered in the music composition, such as duration, key, or structure.",
-        "negative_constraints": "Elements or characteristics that should be avoided in the music composition, such as certain instruments, styles, or moods.",
-        "confidence": "An assessment of how certain the model is about the extracted attributes, categorized as low, medium, or high."
-    },
-
-    "_output_rules": [
-            "Must include all keys always - never omit any field",
-        "If unknown -> use null or [] (never invent or guess)",
-        "No extra keys allowed - only use the fields defined above",
-        "Strings should be short and normalized (e.g., 'road_trip' instead of 'road trip')",
-        "energy must be exactly one of: low, medium, high, or null",
-        "confidence must be exactly one of: low, medium, high or null",
-        "tempo_hint_bpm must be a number between 40-200 or null",
-        "Output must be valid JSON matching this exact structure"
-        ],
-
-    "_template": {
-        "mood": [],
-        "themes": [],
-        "energy": null,
-        "tempo_hint_bpm": null,
-        "instruments": [],
-        "visuals": [],
-        "genres": [],
-        "era": [],
-        "constraints": [],
-        "negative_constraints": [],
-        "confidence": null
-    }
-
+{
+  "_definitions": {
+    "semantic_query": "Compact normalized text summary for semantic retrieval. Include low-level normalized tags when present (e.g., mood:nostalgic scene:night_city instrument:synth energy:medium), while preserving natural phrase context.",
+    "hard_constraints": "Explicit, enforceable requirements used as deterministic filters (e.g., genres_include, instruments_include, energy, tempo_bpm_min/max, era, instrumental_only).",
+    "soft_preferences": "Preference-like signals used for reranking/boosting, not strict filtering (e.g., moods, themes, energy hints, tempo hints, tags).",
+    "exclusions": "Explicit negative constraints that must be avoided (e.g., genres_exclude, artists_exclude, tags_exclude, vocal_content=no_vocals)."
+  },
+  "_output_rules": [
+    "Output JSON only (no markdown, no prose).",
+    "Must include exactly these top-level keys: semantic_query, hard_constraints, soft_preferences, exclusions.",
+    "Do not add extra top-level keys.",
+    "semantic_query must be a non-empty string.",
+    "When detectable, append low-level normalized tags to semantic_query (e.g., mood:*, scene:*, instrument:*, genre:*, energy:*).",
+    "Do not encode exclusions as positive tags in semantic_query.",
+    "hard_constraints, soft_preferences, and exclusions must be JSON objects.",
+    "If no values are found for a section, use an empty object {}.",
+    "Keep values normalized and concise; use snake_case where appropriate.",
+    "Do not invent unsupported constraints."
+  ],
+  "_template": {
+    "semantic_query": "",
+    "hard_constraints": {},
+    "soft_preferences": {},
+    "exclusions": {}
+  }
 }

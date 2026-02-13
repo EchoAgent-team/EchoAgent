@@ -14,6 +14,17 @@ Prompts may span multiple categories simultaneously.
 
 ---
 
+## Mapping Rule
+
+Categories are mapped into `VibeIntent` sections, not legacy flat attributes.
+
+- `semantic_query`: shared summary for retrieval text matching.
+- `hard_constraints`: explicit, enforceable requirements.
+- `soft_preferences`: preference-like cues for ranking boosts.
+- `exclusions`: explicit avoid/negative instructions.
+
+---
+
 ## Category 1: Mood-Only Prompts
 
 Prompts that primarily describe emotional tone without explicit context or constraints.
@@ -24,12 +35,9 @@ Prompts that primarily describe emotional tone without explicit context or const
 - "euphoric late-night feeling"
 - "soft and introspective"
 
-**Primary fields**
-- mood
-
-**Secondary fields**
-- energy (if implied)
-- confidence
+**Primary mapping**
+- `semantic_query`
+- `soft_preferences.moods`
 
 ---
 
@@ -43,13 +51,10 @@ Prompts that describe an imagined visual or cinematic setting.
 - "foggy forest at sunrise"
 - "snow falling outside a train window"
 
-**Primary fields**
-- visuals
-- themes
-
-**Secondary fields**
-- mood
-- energy
+**Primary mapping**
+- `semantic_query`
+- `soft_preferences.themes`
+- optional `soft_preferences.moods`
 
 ---
 
@@ -63,13 +68,10 @@ Prompts that specify an activity or situational context.
 - "long train ride alone"
 - "late-night studying with focus"
 
-**Primary fields**
-- themes
-- mood
-
-**Secondary fields**
-- energy
-- constraints
+**Primary mapping**
+- `semantic_query`
+- `soft_preferences.themes`
+- optional `soft_preferences.energy`
 
 ---
 
@@ -83,12 +85,10 @@ Prompts that focus on lyrical or conceptual subject matter.
 - "themes of solitude and reflection"
 - "songs about escape and freedom"
 
-**Primary fields**
-- themes
-
-**Secondary fields**
-- mood
-- confidence
+**Primary mapping**
+- `semantic_query`
+- `soft_preferences.themes`
+- optional `soft_preferences.moods`
 
 ---
 
@@ -102,12 +102,10 @@ Prompts that explicitly mention instrumentation.
 - "synth-heavy soundscape"
 - "minimal drums and bass"
 
-**Primary fields**
-- instruments
-
-**Secondary fields**
-- constraints
-- genres
+**Primary mapping**
+- `hard_constraints.instruments_include`
+- `semantic_query`
+- optional `soft_preferences`
 
 ---
 
@@ -121,13 +119,10 @@ Prompts that specify musical style, genre, or historical period.
 - "modern ambient"
 - "jazz with a classic feel"
 
-**Primary fields**
-- genres
-- era
-
-**Secondary fields**
-- mood
-- energy
+**Primary mapping**
+- `hard_constraints.genres_include`
+- `hard_constraints.era`
+- `semantic_query`
 
 ---
 
@@ -141,12 +136,10 @@ Prompts that describe intensity, pace, or rhythmic drive.
 - "fast-paced but not aggressive"
 - "medium energy, steady rhythm"
 
-**Primary fields**
-- energy
-- tempo_hint_bpm (only if numeric or explicit)
-
-**Secondary fields**
-- mood
+**Primary mapping**
+- explicit energy/BPM -> `hard_constraints`
+- approximate/qualitative energy/BPM -> `soft_preferences`
+- always keep a compact `semantic_query`
 
 ---
 
@@ -160,12 +153,10 @@ Prompts with explicit requirements or exclusions.
 - "short tracks only"
 - "avoid love songs"
 
-**Primary fields**
-- constraints
-- negative_constraints
-
-**Secondary fields**
-- confidence
+**Primary mapping**
+- positive strict rules -> `hard_constraints`
+- avoid rules -> `exclusions`
+- optional preference hints -> `soft_preferences`
 
 ---
 
@@ -178,16 +169,9 @@ Prompts combining multiple intent types.
 - "late-night city rain, minimal vocals, medium energy"
 - "dreamy but unsettling, slow tempo, synth-focused"
 
-**Primary fields**
-- mood
-- themes
-- visuals
-- instruments
-
-**Secondary fields**
-- energy
-- constraints
-- confidence
+**Primary mapping**
+- split signals across all four `VibeIntent` sections as needed
+- do not force the prompt into one category
 
 ---
 
@@ -201,10 +185,9 @@ Prompts combining multiple intent types.
 
 ## Success Criteria
 
-The taxonomy is considered sufficient if:
-- Every field in `prompt_schema.json` appears in at least one category
-- Both simple and complex prompts are represented
-- The taxonomy can be used to construct a test suite of 20–30 prompts
+- Taxonomy covers prompts that exercise each `VibeIntent` section.
+- Mixed prompts demonstrate correct hard/soft/exclusion separation.
+- The taxonomy can seed deterministic fixture-based parser tests.
 
 ---
 
