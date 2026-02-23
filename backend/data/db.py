@@ -1,5 +1,6 @@
 """
-Database models and initialization for EchoAgent.
+MSD-based database models and initialization for EchoAgent.
+Schema: artists → albums → tracks + audio_features + lyrics (BoW JSON).
 
 This module defines SQLAlchemy models for storing song metadata, audio features,
 tags, lyrics, and album art in a relational database (SQLite/PostgreSQL).
@@ -22,107 +23,74 @@ Base = declarative_base()
 class Artist(Base):
     """Artists table storing artist information."""
     __tablename__ = "artists"
-
-    artist_id = Column(String, primary_key=True)  # Spotify ID or custom UUID
+    
+    artist_id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-
+    terms = Column(JSON, nullable=True)  # artist_terms array
+    terms_freq = Column(JSON, nullable=True)
+    terms_weight = Column(JSON, nullable=True)
+    
     # Relationships
-    songs = relationship("Song", back_populates="artist")
-
+    albums = relationship("Album", back_populates="artist")
+    tracks = relationship("Track", back_populates="artist")
 
 class Album(Base):
     """Albums table storing album information."""
     __tablename__ = "albums"
-
-    album_id = Column(String, primary_key=True)  # Spotify ID or custom UUID
+    
+    release_id = Column(String, primary_key=True)
     title = Column(String, nullable=False)
-    art_url = Column(String, nullable=True)  # URL to album art (original source)
-    art_file_path = Column(String, nullable=True)  # Local file path for album art (for embeddings)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-
+    year = Column(Integer, nullable=True)
+    artist_id = Column(String, ForeignKey("artists.artist_id"), nullable=False)
+    
     # Relationships
-    songs = relationship("Song", back_populates="album")
-
+    artist = relationship("Artist", back_populates="albums")
+    tracks = relationship("Track", back_populates="album")
 
 class Song(Base):
     """Main songs table storing basic song metadata."""
-    __tablename__ = "songs"
+    __tablename__ = "tracks"
 
-    id = Column(String, primary_key=True)  # Spotify ID or custom UUID
+    track_id = Column(String, primary_key=True)
     title = Column(String, nullable=False)
     artist_id = Column(String, ForeignKey("artists.artist_id", ondelete="CASCADE"), nullable=False)
-    album_id = Column(String, ForeignKey("albums.album_id", ondelete="SET NULL"), nullable=True)
-    duration_ms = Column(Integer, nullable=True)
-    spotify_id = Column(String, unique=True, nullable=True)
-    spotify_url = Column(String, nullable=True)
-    preview_url = Column(String, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-
+    release_id = Column(String, ForeignKey("albums.release_id", ondelete="CASCADE"), nullable=True)
+    seed_genre = Column(String, nullable=True)  # From msd_lastfm_map.cls
+    top_tags_json = Column(JSON, nullable=True)  # Last.fm + inferred: {"tag": weight}
+    
     # Relationships
-    artist = relationship("Artist", back_populates="songs")
-    album = relationship("Album", back_populates="songs")
-    audio_features = relationship("AudioFeature", back_populates="song", uselist=False, cascade="all, delete-orphan")
-    lyrics = relationship("Lyric", back_populates="song", uselist=False, cascade="all, delete-orphan")
-    tags = relationship("Tag", back_populates="song", cascade="all, delete-orphan")
-
+    artist = relationship("Artist", back_populates="tracks")
+    album = relationship("Album", back_populates="tracks")
+    audio_feature = relationship("AudioFeature", back_populates="track", uselist=False)
+    lyrics = relationship("Lyrics", back_populates="track", uselist=False)
 
 class AudioFeature(Base):
-    """Audio features extracted from Spotify or other sources."""
     __tablename__ = "audio_features"
-
-    id = Column(String, ForeignKey("songs.id", ondelete="CASCADE"), primary_key=True)
-    tempo = Column(Float, nullable=True)
-    key = Column(Integer, nullable=True)  # 0-11, representing musical keys
+    
+    track_id = Column(String, ForeignKey("tracks.track_id", ondelete="CASCADE"), primary_key=True)
+    duration = Column(Float, nullable=True)
+    key = Column(Integer, nullable=True)  # 0-11
+    key_confidence = Column(Float, nullable=True)
+    loudness = Column(Float, nullable=True)
     mode = Column(Integer, nullable=True)  # 0=minor, 1=major
-    valence = Column(Float, nullable=True)  # 0.0-1.0
-    energy = Column(Float, nullable=True)  # 0.0-1.0
-    danceability = Column(Float, nullable=True)  # 0.0-1.0
-    acousticness = Column(Float, nullable=True)  # 0.0-1.0
-    instrumentalness = Column(Float, nullable=True)  # 0.0-1.0
-    liveness = Column(Float, nullable=True)  # 0.0-1.0
-    speechiness = Column(Float, nullable=True)  # 0.0-1.0
-    loudness = Column(Float, nullable=True)  # dB
+    mode_confidence = Column(Float, nullable=True)
+    tempo = Column(Float, nullable=True)
     time_signature = Column(Integer, nullable=True)
-
+    time_signature_confidence = Column(Float, nullable=True)
+    danceability = Column(Float, nullable=True)
+    energy = Column(Float, nullable=True)
+    
     # Relationship
-    song = relationship("Song", back_populates="audio_features")
+    track = relationship("Track", back_populates="audio_feature")
 
-
-class Tag(Base):
-    """Tags for songs (genre, mood, source, etc.)."""
-    __tablename__ = "tags"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    song_id = Column(String, ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
-    tag_type = Column(String, nullable=False)  # 'genre', 'mood', 'source'
-    tag_value = Column(String, nullable=False)
-
-    # Relationship
-    song = relationship("Song", back_populates="tags")
-
-    # Unique constraint to prevent duplicate tags
-    __table_args__ = (
-        UniqueConstraint('song_id', 'tag_type', 'tag_value', name='uq_song_tag'),
-    )
-
-
-class Lyric(Base):
-    """Lyrics or BoW representation for songs."""
+class Lyrics(Base):
     __tablename__ = "lyrics"
-
-    id = Column(String, ForeignKey("songs.id", ondelete="CASCADE"), primary_key=True)
-    full_text = Column(Text, nullable=True)  # Deprecated for copyrighted material
-    bow_vector = Column(JSON, nullable=True)  # MXM BoW e.g. {"0": 3, "42": 1}
-    vocab_size = Column(Integer, nullable=True)
-    source = Column(String, nullable=True)
-    language = Column(String, nullable=True)
+    
+    track_id = Column(String, ForeignKey("tracks.track_id", ondelete="CASCADE"), primary_key=True)
+    bow_vector = Column(JSON, nullable=True)  # musiXmatch: {"word": count}
+    
     # Relationship
-    song = relationship("Song", back_populates="lyrics")
-
+    track = relationship("Track", back_populates="lyrics")
 
 # Database initialization
 def get_database_url() -> str:
@@ -190,250 +158,73 @@ class DBSession:
 
 
 # Query pipeline functions
-def query_by_filters(
+def query_tracks_by_filters(
     session: Session,
-    artist: Optional[str] = None,
-    title: Optional[str] = None,
-    album: Optional[str] = None,
-    min_tempo: Optional[float] = None,
-    max_tempo: Optional[float] = None,
-    key: Optional[int] = None,
-    mode: Optional[int] = None,
-    min_valence: Optional[float] = None,
-    max_valence: Optional[float] = None,
+    artist_id: Optional[str] = None,
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
+    seed_genre: Optional[str] = None,
     min_energy: Optional[float] = None,
     max_energy: Optional[float] = None,
     min_danceability: Optional[float] = None,
     max_danceability: Optional[float] = None,
-    tags: Optional[List[Dict[str, str]]] = None,  # [{'tag_type': 'genre', 'tag_value': 'rock'}]
-    limit: Optional[int] = None
-) -> List[Song]:
+    min_tempo: Optional[float] = None,
+    max_tempo: Optional[float] = None,
+    limit: Optional[int] = 100
+) -> List[Track]:
     """
-    Query songs using SQL filters.
+    Query tracks with filters. Use track_ids from vector DB for hybrid search.
     
     Args:
-        session: Database session
-        artist: Filter by artist name (partial match)
-        title: Filter by title (partial match)
-        album: Filter by album name (partial match)
-        min_tempo: Minimum tempo
-        max_tempo: Maximum tempo
-        key: Musical key (0-11)
-        mode: Mode (0=minor, 1=major)
-        min_valence: Minimum valence (0.0-1.0)
-        max_valence: Maximum valence (0.0-1.0)
-        min_energy: Minimum energy (0.0-1.0)
-        max_energy: Maximum energy (0.0-1.0)
-        min_danceability: Minimum danceability (0.0-1.0)
-        max_danceability: Maximum danceability (0.0-1.0)
-        tags: List of tag filters, each with 'tag_type' and 'tag_value'
-        limit: Maximum number of results
-        
+        session: DB session.
+        artist_id: Exact MSD artist_id.
+        min_year/max_year: Album year range.
+        seed_genre: Exact match.
+        min_energy etc.: Audio feature ranges.
+        limit: Max results.
+    
     Returns:
-        List of Song objects matching the filters
+        List of Track objects.
     """
-    query = session.query(Song).join(AudioFeature, Song.id == AudioFeature.id, isouter=True)
+    query = session.query(Track).join(Album).outerjoin(AudioFeature)
     
-    # Basic filters
-    if artist:
-        query = query.join(Artist, Song.artist_id == Artist.artist_id)
-        query = query.filter(Artist.name.ilike(f"%{artist}%"))
-    if title:
-        query = query.filter(Song.title.ilike(f"%{title}%"))
-    if album:
-        query = query.join(Album, Song.album_id == Album.album_id, isouter=True)
-        query = query.filter(Album.title.ilike(f"%{album}%"))
-    
-    # Audio feature filters
-    if min_tempo is not None:
-        query = query.filter(AudioFeature.tempo >= min_tempo)
-    if max_tempo is not None:
-        query = query.filter(AudioFeature.tempo <= max_tempo)
-    if key is not None:
-        query = query.filter(AudioFeature.key == key)
-    if mode is not None:
-        query = query.filter(AudioFeature.mode == mode)
-    if min_valence is not None:
-        query = query.filter(AudioFeature.valence >= min_valence)
-    if max_valence is not None:
-        query = query.filter(AudioFeature.valence <= max_valence)
-    if min_energy is not None:
+    if artist_id:
+        query = query.filter(Track.artist_id == artist_id)
+    if seed_genre:
+        query = query.filter(Track.seed_genre == seed_genre)
+    if min_year:
+        query = query.filter(Album.year >= min_year)
+    if max_year:
+        query = query.filter(Album.year <= max_year)
+    if min_energy:
         query = query.filter(AudioFeature.energy >= min_energy)
-    if max_energy is not None:
+    if max_energy:
         query = query.filter(AudioFeature.energy <= max_energy)
-    if min_danceability is not None:
+    if min_danceability:
         query = query.filter(AudioFeature.danceability >= min_danceability)
-    if max_danceability is not None:
+    if max_danceability:
         query = query.filter(AudioFeature.danceability <= max_danceability)
+    if min_tempo:
+        query = query.filter(AudioFeature.tempo >= min_tempo)
+    if max_tempo:
+        query = query.filter(AudioFeature.tempo <= max_tempo)
     
-    # Tag filters
-    if tags:
-        tag_conditions = []
-        for tag_filter in tags:
-            tag_type = tag_filter.get('tag_type')
-            tag_value = tag_filter.get('tag_value')
-            if tag_type and tag_value:
-                tag_conditions.append(
-                    and_(
-                        Tag.tag_type == tag_type,
-                        Tag.tag_value == tag_value
-                    )
-                )
-        if tag_conditions:
-            # Join with tags and filter
-            query = query.join(Tag, Song.id == Tag.song_id)
-            query = query.filter(or_(*tag_conditions))
-            # Use distinct to avoid duplicates from multiple tags
-            query = query.distinct()
-    
-    if limit:
-        query = query.limit(limit)
-    
-    return query.all()
+    return query.limit(limit).all()
 
-
-def query_by_semantics(
-    session: Session,
-    query_text: str,
-    collection: str = "lyrics",
-    top_k: int = 10,
-    model_name: Optional[str] = None,
-    where: Optional[Dict[str, Any]] = None
-) -> List[Song]:
+# Example: Get embed-ready data for embeddings.py
+def get_embed_data(session: Session) -> List[Dict]:
     """
-    Query songs using semantic similarity search in vector database.
-    
-    Args:
-        session: Database session
-        query_text: Text query for semantic search
-        collection: Collection to search ('lyrics' or 'art')
-        top_k: Number of results to return
-        model_name: Optional model name for query embedding
-        where: Optional metadata filter for Chroma
-        
-    Returns:
-        List of Song objects ordered by similarity
+    Get data for embeddings.py: tracks + tags + lyrics + audio.
     """
-    # Import here to avoid circular dependency
-    from .embeddings import query_by_semantics as vector_query
-    
-    # Query vector database
-    vector_results = vector_query(
-        query_text=query_text,
-        collection=collection,
-        top_k=top_k,
-        model_name=model_name,
-        where=where
-    )
-    
-    # Get song IDs from vector results
-    song_ids = [result["id"] for result in vector_results]
-    
-    if not song_ids:
-        return []
-    
-    # Query SQL database for full song objects
-    songs = session.query(Song).filter(Song.id.in_(song_ids)).all()
-    
-    # Sort by order from vector results (maintain similarity ranking)
-    song_dict = {song.id: song for song in songs}
-    ordered_songs = [song_dict[song_id] for song_id in song_ids if song_id in song_dict]
-    
-    return ordered_songs
-
-
-def hybrid_query(
-    session: Session,
-    filters: Optional[Dict[str, Any]] = None,
-    text_query: Optional[str] = None,
-    collection: str = "lyrics",
-    top_k: int = 10,
-    model_name: Optional[str] = None,
-    vector_where: Optional[Dict[str, Any]] = None
-) -> List[Song]:
-    """
-    Combine SQL filters with vector similarity search.
-    
-    This function first applies SQL filters to get a candidate set,
-    then performs vector search within that set, or vice versa depending on
-    which is more selective.
-    
-    Args:
-        session: Database session
-        filters: Dictionary of SQL filter parameters (same as query_by_filters)
-        text_query: Text query for semantic search
-        collection: Collection to search ('lyrics' or 'art')
-        top_k: Number of results to return
-        model_name: Optional model name for query embedding
-        vector_where: Optional metadata filter for Chroma
-        
-    Returns:
-        List of Song objects matching both filters and semantic query
-    """
-    if not filters and not text_query:
-        # No filters, return empty
-        return []
-    
-    if filters and not text_query:
-        # Only SQL filters
-        return query_by_filters(session, **filters, limit=top_k)
-    
-    if text_query and not filters:
-        # Only vector search
-        return query_by_semantics(
-            session, text_query, collection, top_k, model_name, vector_where
-        )
-    
-    # Both filters and text query - query Chroma first, then filter in Python
-    # This approach avoids Chroma's $in operator limits and scales better
-    
-    # Get candidate set from SQL filters
-    candidate_songs = query_by_filters(session, **filters)
-    candidate_ids = {song.id for song in candidate_songs}
-    
-    if not candidate_ids:
-        return []
-    
-    # Query vector database first (semantic search)
-    from .embeddings import query_by_semantics as vector_query
-    
-    # Query with larger top_k to ensure we get enough semantic matches
-    # that overlap with SQL candidates. Scale top_k based on candidate set size.
-    # For large candidate sets, query more results to increase overlap probability
-    query_size = min(top_k * 10, max(top_k * 3, len(candidate_ids) // 10))
-    query_size = max(query_size, top_k * 2)  # At least 2x top_k
-    
-    vector_results = vector_query(
-        query_text=text_query,
-        collection=collection,
-        top_k=query_size,
-        model_name=model_name,
-        where=vector_where
-    )
-    
-    # Filter vector results to only include candidates from SQL
-    # This Python-side filtering avoids Chroma's $in operator limits
-    filtered_results = [
-        result for result in vector_results 
-        if result["id"] in candidate_ids
-    ][:top_k]
-    
-    # Get song IDs
-    song_ids = [result["id"] for result in filtered_results]
-    
-    if not song_ids:
-        return []
-    
-    # Query SQL database for full song objects
-    songs = session.query(Song).filter(Song.id.in_(song_ids)).all()
-    
-    # Sort by order from vector results
-    song_dict = {song.id: song for song in songs}
-    ordered_songs = [song_dict[song_id] for song_id in song_ids if song_id in song_dict]
-    
-    return ordered_songs
-
+    return session.query(
+        Track.track_id,
+        Track.seed_genre,
+        Track.top_tags_json,
+        Lyrics.bow_vector,
+        AudioFeature.energy,
+        AudioFeature.tempo,
+        # Add more as needed
+    ).outerjoin(Lyrics).outerjoin(AudioFeature).all()
 
 if __name__ == "__main__":
-    # Initialize database when run directly
     init_db()
