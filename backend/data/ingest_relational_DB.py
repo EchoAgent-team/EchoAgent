@@ -297,9 +297,36 @@ def ingest_musixmatch_sqlite(db_path: Path, msd_db_url: str) -> None:
 
 
 def ingest_genres(cls_file: Path, db_url: str) -> None:
-    """Ingest seed_genre from msd_lastfm_map.cls (placeholder—adjust format)."""
-    print("Genres ingestion: TBD (custom parser for .cls format needed).")
-    # TODO: Implement based on exact .cls format from tagtraum
+    """Ingest seed_genre from msd_lastfm_map.cls → Track.seed_genre."""
+    print(f"Parsing genres from {cls_file}...")
+    genres_data = {}
+    
+    with open(cls_file, 'r') as f:
+        for line_num, line in enumerate(tqdm(f, desc="Last.fm map .cls")):
+            line = line.strip()
+            if not line or line.startswith('#'):  # Skip comments/empty
+                continue
+                
+            # Format: track_id genre [other_tags...]
+            # e.g. "TRABC123 rock alternative indie"
+            parts = line.split()
+            if len(parts) >= 2:
+                tid = parts[0]
+                seed_genre = parts[1]  # First = seed genre
+                genres_data[tid] = seed_genre
+    
+    print(f"Loaded {len(genres_data)} genre mappings.")
+    
+    with DBSession(db_url) as session:
+        tracks = {t.track_id: t for t in session.query(Track).all()}
+        updates = 0
+        for tid, genre in tqdm(genres_data.items(), desc="Updating seed_genre"):
+            if tid in tracks:
+                tracks[tid].seed_genre = genre
+                updates += 1
+        session.commit()
+        print(f"✅ Updated {updates} tracks with seed_genre from .cls.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MSD ETL Pipeline")
@@ -307,6 +334,7 @@ if __name__ == "__main__":
     parser.add_argument("--lastfm_dir", help="Dir with lastfm_*.txt (full MSD)")
     parser.add_argument("--lastfm_json_dir", help="Dir with Last.fm JSON (subset, parallel to h5)")
     parser.add_argument("--mxm_sqlite", help="Path to mxm_dataset.db (REQUIRED for lyrics)")
+    parser.add_argument("--lastfm_map", help="Path to msd_lastfm_map.cls (REQUIRED for genres)")
     parser.add_argument("--db_url", default="sqlite:///echoagent.db")
     parser.add_argument("--batch_size", type=int, default=100)
     args = parser.parse_args()
@@ -327,5 +355,11 @@ if __name__ == "__main__":
         ingest_musixmatch_sqlite(Path(args.mxm_sqlite), args.db_url)
     else:
         print("⚠️ Skip lyrics: --mxm_sqlite REQUIRED (mxm_dataset.db)")
-    
+        
+    # Phase 4: Genres (cls file)
+    if args.lastfm_map and Path(args.lastfm_map).exists():
+        ingest_genres(Path(args.lastfm_map), args.db_url)
+    else:
+        print("⚠️ Skip genres: --lastfm_map Data/msd_lastfm_map.cls")
+
     print("✅ ETL complete!")
