@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import chromadb
 from chromadb.config import Settings
+from langchain_chroma import Chroma
 import numpy as np
 
 
@@ -25,12 +26,39 @@ DEFAULT_TEXT_MODEL = "all-MiniLM-L6-v2"
 
 
 def _clean_text(value: Any) -> str:
+    """
+    Clean and normalize text values for consistent processing.
+
+    This function handles None values, converts to string, removes excess whitespace,
+    and strips leading/trailing whitespace.
+
+    Args:
+        value (Any): Input value to clean.
+
+    Returns:
+        str: Cleaned text string. Empty string if input is None.
+    """
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
 def _clean_token(value: Any) -> str:
+    """
+    Clean and normalize text for use as tokens or identifiers.
+
+    This function cleans text and then normalizes it for use as tokens by:
+    - Converting to lowercase
+    - Replacing whitespace with underscores
+    - Removing invalid characters (keeping only alphanumeric, underscore, colon, hyphen, dot, plus)
+    - Stripping leading/trailing underscores
+
+    Args:
+        value (Any): Input value to tokenize.
+
+    Returns:
+        str: Clean token string. Empty string if input is None or becomes empty after cleaning.
+    """
     text = _clean_text(value).lower()
     if not text:
         return ""
@@ -40,6 +68,17 @@ def _clean_token(value: Any) -> str:
 
 
 def _to_list(value: Any) -> List[Any]:
+    """
+    Convert a value to a list if it isn't already.
+
+    Handles None, single values, and existing iterables.
+
+    Args:
+        value (Any): Value to convert to list.
+
+    Returns:
+        List[Any]: List containing the value(s). Empty list if value is None.
+    """
     if value is None:
         return []
     if isinstance(value, (list, tuple, set)):
@@ -48,6 +87,18 @@ def _to_list(value: Any) -> List[Any]:
 
 
 def _unique_tokens(values: Iterable[Any]) -> List[str]:
+    """
+    Extract unique, cleaned tokens from an iterable of values.
+
+    Processes each value through _clean_token(), removes duplicates while
+    preserving order, and filters out empty tokens.
+
+    Args:
+        values (Iterable[Any]): Values to process into tokens.
+
+    Returns:
+        List[str]: List of unique, non-empty tokens in order of first appearance.
+    """
     out: List[str] = []
     seen = set()
     for v in values:
@@ -61,14 +112,24 @@ def _unique_tokens(values: Iterable[Any]) -> List[str]:
 
 def parse_msd_lastfm_map_line(line: str, min_strength: int = 20) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
-    Parse one line from `msd_lastfm_map.cls`.
+    Parse a single line from the MSD Last.fm mapping file.
 
-    Format:
-      trackId<TAB>seed_genre<TAB>tag1<TAB>strength1<TAB>tag2<TAB>strength2...
+    The file format is tab-separated with:
+    track_id<TAB>seed_genre<TAB>tag1<TAB>strength1<TAB>tag2<TAB>strength2...
 
-    We keep:
-    - `seed_genre` (genre label)
-    - tag/strength pairs (filtered by `min_strength`)
+    This function extracts the track ID, seed genre, and tag/strength pairs,
+    filtering tags by minimum strength.
+
+    Args:
+        line (str): Raw line from the mapping file.
+        min_strength (int): Minimum tag strength to include. Default 20.
+
+    Returns:
+        Optional[Tuple[str, Dict[str, Any]]]: Tuple of (track_id, mapping_dict) if valid,
+            None if line is invalid or empty. The mapping_dict contains:
+            - 'seed_genre': Cleaned genre string or None
+            - 'tags': List of tag names (filtered by strength)
+            - 'tag_strengths': Dict of tag -> strength mappings
     """
     line = (line or "").strip()
     if not line or line.startswith("#"):
@@ -107,10 +168,22 @@ def load_msd_lastfm_map(
     max_tags_per_track: Optional[int] = 20,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Load Last.fm genre/tag labels from `.cls` or `.zip`.
+    Load Last.fm genre and tag mappings from MSD dataset files.
+
+    Supports both plain .cls files and .zip archives containing .cls files.
+    Processes each line to extract track IDs, seed genres, and tag/strength pairs.
+
+    Args:
+        path (str): Path to .cls file or .zip archive containing .cls files.
+        min_strength (int): Minimum tag strength to include. Default 20.
+        max_tags_per_track (Optional[int]): Maximum tags to keep per track. Default 20.
 
     Returns:
-      {msd_track_id: {"seed_genre": str|None, "tags": [...], "tag_strengths": {...}}}
+        Dict[str, Dict[str, Any]]: Mapping of track_id to genre/tag data.
+            Each value dict contains 'seed_genre', 'tags', and 'tag_strengths'.
+
+    Raises:
+        FileNotFoundError: If the specified path does not exist.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
@@ -133,6 +206,7 @@ def load_msd_lastfm_map(
             out[track_id] = item
 
     if path.lower().endswith(".zip"):
+        # Handle zip archives containing .cls files
         with zipfile.ZipFile(path, "r") as zf:
             names = [n for n in zf.namelist() if not n.endswith("/")]
             cls_names = [n for n in names if n.lower().endswith(".cls")]
@@ -140,6 +214,7 @@ def load_msd_lastfm_map(
                 with zf.open(name, "r") as fh:
                     consume_lines((b.decode("utf-8", errors="ignore") for b in fh))
     else:
+        # Handle plain .cls files
         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
             consume_lines(fh)
 
@@ -151,9 +226,25 @@ def merge_lastfm_tags_into_track_document(
     lastfm_entry: Optional[Mapping[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Merge one Last.fm mapping entry into a TrackDocument-like dict.
-    `seed_genre` is used for genres. Tags/strengths are preserved on the document
-    for later use/debugging, but not used in the current embedding text builder.
+    Merge Last.fm genre and tag data into a track document.
+
+    This function enriches a track document with genre and tag information from
+    Last.fm mappings. It adds seed genres and tags to the document while preserving
+    existing data and tracking provenance.
+
+    Merging behavior:
+    - Adds Last.fm seed genre to genres list if not already present
+    - Adds Last.fm tags to tags list if not already present
+    - Preserves existing genres and tags
+    - Records provenance information about data sources
+
+    Args:
+        track_document (Mapping[str, Any]): Base track document to enrich.
+        lastfm_entry (Optional[Mapping[str, Any]]): Last.fm data with 'seed_genre',
+            'tags', and 'tag_strengths'. If None, returns track_document unchanged.
+
+    Returns:
+        Dict[str, Any]: Enriched track document with merged Last.fm data.
     """
     td = dict(track_document or {})
     td.setdefault("genres", [])
@@ -185,9 +276,19 @@ def merge_lastfm_tags_into_track_document(
 
 def load_mxm_vocab(path: str) -> Dict[int, str]:
     """
-    Load MXM vocab from the `%...` header line in an MXM dataset file.
+    Load the musiXmatch (MXM) vocabulary from a dataset file.
 
-    MXM word ids in the data lines are 1-based positions into this list.
+    The MXM vocabulary is stored in a header line starting with '%' followed by
+    comma-separated words. Word IDs are 1-based indices into this list.
+
+    Args:
+        path (str): Path to MXM dataset file containing the vocabulary header.
+
+    Returns:
+        Dict[int, str]: Mapping of word_id (1-based) to word string.
+
+    Raises:
+        ValueError: If no vocabulary header line (%) is found in the file.
     """
     with open(path, "r", encoding="utf-8", errors="ignore") as fh:
         for raw_line in fh:
@@ -202,12 +303,21 @@ def load_mxm_vocab(path: str) -> Dict[int, str]:
 
 def iter_mxm_bow_rows(path: str):
     """
-    Yield MXM rows as simple dicts.
+    Iterate over bag-of-words rows from an MXM dataset file.
 
-    Each row contains:
-    - `track_id`  (MSD track id)
-    - `mxm_tid`   (musiXmatch track id, string)
-    - `bow_vector` (dict[word_id -> count])
+    Parses each data line into a dictionary containing track ID, MXM track ID,
+    and bag-of-words vector. Skips header lines and comments.
+
+    Each row format: track_id,mxm_tid,word_id:count,word_id:count,...
+
+    Args:
+        path (str): Path to MXM dataset file.
+
+    Yields:
+        Dict[str, Any]: Row dictionaries with keys:
+            - 'track_id': MSD track ID (string)
+            - 'mxm_tid': musiXmatch track ID (string)
+            - 'bow_vector': Dict[int, int] of word_id -> count
     """
     with open(path, "r", encoding="utf-8", errors="ignore") as fh:
         for raw_line in fh:
@@ -244,16 +354,61 @@ def iter_mxm_bow_rows(path: str):
 
 class EmbeddingManager:
     """
-    Small manager for Chroma + embedding models.
+    Manages vector embeddings for track documents using ChromaDB and sentence transformers.
 
-    Main TrackDocument workflow:
-      1) `build_track_embedding_text(track_doc, mxm_vocab=...)`
-      2) `generate_track_embedding(track_doc, mxm_vocab=...)`
-      3) `upsert_track_document_embedding(track_doc, mxm_vocab=...)`
-      4) `query_track_embeddings("rock guitar heartbreak")`
+    This class provides a comprehensive interface for handling text embeddings in the EchoAgent
+    music recommendation system. It manages two ChromaDB collections: 'track_text_embeddings'
+    for full track document embeddings and 'lyrics_embeddings' for legacy lyrics-only embeddings.
+
+    Key functionalities:
+    - Loading and managing sentence transformer models for text embedding generation
+    - Converting track documents (including metadata, genres, and bag-of-words lyrics) into
+      embedding vectors
+    - Storing and querying embeddings in ChromaDB collections
+    - Batch processing of MXM (musiXmatch) bag-of-words data with Last.fm genre mappings
+    - Providing backward-compatible APIs for existing code
+
+    The primary workflow involves:
+    1. Building embedding text from track documents using genres and MXM BoW data
+    2. Generating embeddings using sentence transformers
+    3. Storing embeddings with metadata in ChromaDB
+    4. Querying for semantically similar tracks
+
+    Attributes:
+        client (chromadb.PersistentClient): Persistent ChromaDB client for database operations
+        track_collection: ChromaDB collection for track text embeddings
+        lyrics_collection: ChromaDB collection for legacy lyrics embeddings
+        _text_model: Cached sentence transformer model instance
+        _text_model_name: Name of the currently loaded model
+
+    Example:
+        manager = EmbeddingManager()
+        # Build and store embedding for a track
+        track_doc = {
+            "track_id": "TR123",
+            "title": "Song Title",
+            "artist_name": "Artist Name",
+            "genres": ["rock", "pop"],
+            "lyrics": {"bow_vector": {1: 5, 2: 3}}
+        }
+        embedding = manager.upsert_track_document_embedding(track_doc, mxm_vocab=vocab)
+
+        # Query for similar tracks
+        results = manager.query_track_embeddings("rock guitar solo", top_k=5)
     """
 
     def __init__(self, persist_directory: Optional[str] = None):
+        """
+        Initialize the EmbeddingManager with ChromaDB collections.
+
+        Args:
+            persist_directory (Optional[str]): Directory path for ChromaDB persistence.
+                If None, defaults to 'chroma_db' subdirectory in the same directory as this file.
+                The directory will be created if it doesn't exist.
+
+        Raises:
+            OSError: If the persist_directory cannot be created.
+        """
         if persist_directory is None:
             persist_directory = os.path.join(os.path.dirname(__file__), "chroma_db")
         os.makedirs(persist_directory, exist_ok=True)
@@ -283,6 +438,25 @@ class EmbeddingManager:
     # --------------------------
 
     def _get_text_model(self, model_name: Optional[str] = None):
+        """
+        Load and cache a sentence transformer model for text embedding.
+
+        This method implements lazy loading and caching of sentence transformer models.
+        If the requested model is already loaded, it returns the cached instance.
+        Otherwise, it loads the model from Hugging Face and caches it.
+
+        Args:
+            model_name (Optional[str]): Name of the sentence transformer model to load.
+                If None, uses the environment variable 'LYRICS_EMBEDDING_MODEL' or
+                defaults to DEFAULT_TEXT_MODEL ('all-MiniLM-L6-v2').
+
+        Returns:
+            SentenceTransformer: The loaded sentence transformer model instance.
+
+        Note:
+            Model loading can be expensive, so this method caches models to avoid
+            reloading the same model multiple times.
+        """
         model_name = model_name or os.getenv("LYRICS_EMBEDDING_MODEL", DEFAULT_TEXT_MODEL)
         if self._text_model is None or self._text_model_name != model_name:
             from sentence_transformers import SentenceTransformer
@@ -303,10 +477,35 @@ class EmbeddingManager:
         per_word_cap: int = 5,
     ) -> str:
         """
-        Convert MXM BoW like {"12": 3, "98": 1} into compact pseudo-text.
+        Convert a bag-of-words (BoW) vector into a compact text representation.
 
-        Why: many tracks do not have full lyrics text, but BoW still gives
-        lexical signal for semantic retrieval.
+        This method transforms MXM (musiXmatch) bag-of-words data into pseudo-text
+        that can be embedded. It handles word frequency capping to prevent dominant
+        words from overwhelming the embedding, and limits total tokens for efficiency.
+
+        The conversion process:
+        1. Sorts word IDs for deterministic output
+        2. Maps word IDs to vocabulary terms (or uses 'unk_{id}' for unknowns)
+        3. Repeats words based on their frequency (capped at per_word_cap)
+        4. Joins tokens with spaces, limited to max_tokens total
+
+        Args:
+            bow_vector (Optional[Mapping[Any, Any]]): Dictionary mapping word IDs to counts.
+                Can be None or empty, in which case an empty string is returned.
+            vocab (Optional[Mapping[Any, str]]): Vocabulary mapping word IDs to words.
+                If None, uses 'unk_{id}' format for all words.
+            max_tokens (int): Maximum number of tokens in the output text. Default 256.
+            per_word_cap (int): Maximum times a single word can be repeated. Default 5.
+                This prevents frequent words from dominating the embedding.
+
+        Returns:
+            str: Space-separated text representation of the bag-of-words data.
+
+        Example:
+            bow = {1: 10, 2: 3, 3: 1}
+            vocab = {1: "love", 2: "heart", 3: "song"}
+            result = manager.bow_to_text(bow, vocab, max_tokens=10, per_word_cap=3)
+            # Result: "love love love heart heart heart song"
         """
         if not bow_vector:
             return ""
@@ -343,10 +542,33 @@ class EmbeddingManager:
         max_bow_tokens: int = 256,
     ) -> str:
         """
-        Build deterministic text from a TrackDocument for text embeddings.
-        Current policy: use only Last.fm genre + MXM BOW text.
+        Build a deterministic text string from a track document for embedding generation.
 
-        If `retrieval_text.embedding_text` already exists, use it directly.
+        This method constructs embedding text by combining genre information and
+        bag-of-words lyrics data. The current policy prioritizes Last.fm genre labels
+        and MXM bag-of-words data for semantic retrieval.
+
+        The text building process:
+        1. Checks for precomputed embedding text in track_document.retrieval_text.embedding_text
+        2. Adds genre tokens in "genre:{genre}" and plain "{genre}" formats
+        3. Optionally includes bag-of-words text converted via bow_to_text()
+        4. Joins all tokens with spaces and normalizes whitespace
+
+        Args:
+            track_document (Mapping[str, Any]): Track document dictionary containing
+                metadata, genres, and lyrics information.
+            mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary for BoW conversion.
+                Required if include_bow is True and BoW data is present.
+            include_bow (bool): Whether to include bag-of-words lyrics in the text.
+                Default True.
+            max_bow_tokens (int): Maximum tokens from BoW conversion. Default 256.
+
+        Returns:
+            str: Normalized text string suitable for embedding generation.
+
+        Note:
+            If track_document.retrieval_text.embedding_text exists, it takes precedence
+            over dynamic text building, allowing for custom embedding strategies.
         """
         td = dict(track_document or {})
         td.setdefault("lyrics", {})
@@ -374,10 +596,29 @@ class EmbeddingManager:
 
     def track_metadata(self, track_document: Mapping[str, Any]) -> Dict[str, Any]:
         """
-        Build Chroma-safe metadata from TrackDocument.
+        Extract and format metadata from a track document for ChromaDB storage.
 
-        Chroma metadata is easiest to query when values are scalars, so list
-        fields are stored as pipe-separated strings.
+        ChromaDB requires metadata values to be scalars for efficient querying.
+        This method converts list fields to pipe-separated strings and extracts
+        relevant scalar metadata from the track document.
+
+        Extracted metadata includes:
+        - Basic track info: track_id, title, artist_name
+        - Genres and tags as CSV strings (pipe-separated)
+        - Lyrics availability flags (has_bow, has_lyrics)
+        - Source IDs from various music databases
+        - Provenance information about data sources
+
+        Args:
+            track_document (Mapping[str, Any]): Track document containing metadata
+                fields like track_id, title, artist_name, genres, tags, etc.
+
+        Returns:
+            Dict[str, Any]: ChromaDB-compatible metadata dictionary with scalar values.
+
+        Note:
+            List fields like genres and tags are converted to "|"-separated strings
+            for ChromaDB compatibility. Use the CSV fields for querying.
         """
         td = dict(track_document or {})
         td.setdefault("lyrics", {})
@@ -424,10 +665,42 @@ class EmbeddingManager:
     # --------------------------
 
     def generate_text_embedding(self, text: str, model_name: Optional[str] = None) -> np.ndarray:
+        """
+        Generate an embedding vector from input text using a sentence transformer model.
+
+        This is the core method for converting text into dense vector representations
+        that capture semantic meaning. The method uses the cached sentence transformer
+        model to encode the text.
+
+        Args:
+            text (str): Input text to embed. Should be non-empty for meaningful results.
+            model_name (Optional[str]): Name of the model to use. If None, uses the
+                default or cached model.
+
+        Returns:
+            np.ndarray: Dense embedding vector as a NumPy array.
+
+        Raises:
+            ValueError: If text is empty or model loading fails.
+        """
         model = self._get_text_model(model_name)
         return model.encode(text, convert_to_numpy=True)
 
     def generate_lyrics_embedding(self, text: str, model_name: Optional[str] = None) -> np.ndarray:
+        """
+        Generate an embedding for lyrics text (legacy method).
+
+        This method is maintained for backward compatibility with existing code
+        that specifically handles lyrics embeddings. It delegates to the general
+        text embedding method.
+
+        Args:
+            text (str): Lyrics text to embed.
+            model_name (Optional[str]): Model name to use for embedding.
+
+        Returns:
+            np.ndarray: Embedding vector for the lyrics text.
+        """
         # Kept for older call sites.
         return self.generate_text_embedding(text, model_name=model_name)
 
@@ -437,6 +710,21 @@ class EmbeddingManager:
         vocab: Mapping[Any, str],
         model_name: Optional[str] = None,
     ) -> np.ndarray:
+        """
+        Generate an embedding from a bag-of-words vector.
+
+        This method converts a BoW vector to text using bow_to_text() and then
+        generates an embedding from that text. Useful for embedding MXM data
+        directly without building a full track document.
+
+        Args:
+            bow_vector (Mapping[Any, Any]): Bag-of-words dictionary (word_id -> count).
+            vocab (Mapping[Any, str]): Vocabulary mapping word IDs to words.
+            model_name (Optional[str]): Model name for embedding generation.
+
+        Returns:
+            np.ndarray: Embedding vector for the BoW data.
+        """
         text = self.bow_to_text(bow_vector, vocab)
         return self.generate_text_embedding(text, model_name=model_name)
 
@@ -446,6 +734,25 @@ class EmbeddingManager:
         mxm_vocab: Optional[Mapping[Any, str]] = None,
         model_name: Optional[str] = None,
     ) -> np.ndarray:
+        """
+        Generate an embedding vector from a complete track document.
+
+        This is the primary method for creating embeddings from track documents.
+        It builds embedding text from the track document and converts it to a vector.
+
+        Args:
+            track_document (Mapping[str, Any]): Complete track document with metadata,
+                genres, and lyrics information.
+            mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary for BoW conversion.
+                Required if the track has BoW lyrics data.
+            model_name (Optional[str]): Model name for embedding generation.
+
+        Returns:
+            np.ndarray: Dense embedding vector representing the track.
+
+        Raises:
+            ValueError: If no embedding text can be built from the track document.
+        """
         # Core TrackDocument -> text -> vector step.
         text = self.build_track_embedding_text(track_document, mxm_vocab=mxm_vocab)
         if not text:
@@ -453,6 +760,18 @@ class EmbeddingManager:
         return self.generate_text_embedding(text, model_name=model_name)
 
     def _upsert(self, collection, item_id: str, embedding: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Internal method to upsert an embedding into a ChromaDB collection.
+
+        This method handles the low-level ChromaDB upsert operation, converting
+        NumPy arrays to lists as required by ChromaDB.
+
+        Args:
+            collection: ChromaDB collection object to upsert into.
+            item_id (str): Unique identifier for the item.
+            embedding (np.ndarray): Embedding vector to store.
+            metadata (Optional[Dict[str, Any]]): Metadata dictionary to store with the embedding.
+        """
         md = dict(metadata or {})
         md.setdefault("song_id", item_id)
         collection.upsert(
@@ -462,12 +781,28 @@ class EmbeddingManager:
         )
 
     def store_track_embedding(self, track_id: str, embedding: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Store a track embedding in the track_text_embeddings collection.
+
+        Args:
+            track_id (str): Unique identifier for the track.
+            embedding (np.ndarray): Embedding vector to store.
+            metadata (Optional[Dict[str, Any]]): Additional metadata to store.
+        """
         md = dict(metadata or {})
         md["track_id"] = track_id
         md.setdefault("song_id", track_id)
         self._upsert(self.track_collection, track_id, embedding, md)
 
     def store_lyrics_embedding(self, song_id: str, embedding: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Store a lyrics embedding in the legacy lyrics collection.
+
+        Args:
+            song_id (str): Unique identifier for the song.
+            embedding (np.ndarray): Embedding vector to store.
+            metadata (Optional[Dict[str, Any]]): Additional metadata to store.
+        """
         md = dict(metadata or {})
         md["song_id"] = song_id
         self._upsert(self.lyrics_collection, song_id, embedding, md)
@@ -480,7 +815,24 @@ class EmbeddingManager:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
         """
-        Convenience method: build vector and store it in `track_text_embeddings`.
+        Convenience method to generate and store a track document embedding.
+
+        This method combines embedding generation and storage into a single operation.
+        It extracts the track_id from the document, generates the embedding, and stores
+        it with automatically extracted metadata.
+
+        Args:
+            track_document (Mapping[str, Any]): Complete track document.
+            mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary for BoW processing.
+            model_name (Optional[str]): Model name for embedding generation.
+            metadata (Optional[Dict[str, Any]]): Additional metadata to merge with
+                automatically extracted metadata.
+
+        Returns:
+            np.ndarray: The generated embedding vector.
+
+        Raises:
+            ValueError: If track_document.track_id is missing.
         """
         track_id = _clean_text((track_document or {}).get("track_id"))
         if not track_id:
@@ -498,6 +850,21 @@ class EmbeddingManager:
     # --------------------------
 
     def _format_query_results(self, results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Format raw ChromaDB query results into a standardized list format.
+
+        This internal method converts ChromaDB's nested result structure into
+        a flat list of dictionaries with consistent keys.
+
+        Args:
+            results (Dict[str, Any]): Raw results from ChromaDB query.
+
+        Returns:
+            List[Dict[str, Any]]: List of result dictionaries with keys:
+                - 'id': The item ID
+                - 'distance': Similarity distance (if available)
+                - 'metadata': Associated metadata dictionary
+        """
         out: List[Dict[str, Any]] = []
         if not results.get("ids"):
             return out
@@ -522,7 +889,21 @@ class EmbeddingManager:
         where: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Query the TrackDocument text collection.
+        Query the track text embeddings collection for semantically similar tracks.
+
+        This method performs semantic search against the track_text_embeddings collection
+        using the provided query text. Results are ranked by embedding similarity.
+
+        Args:
+            query_text (str): Natural language query text (e.g., "rock guitar solo").
+            top_k (int): Number of top results to return. Default 10.
+            model_name (Optional[str]): Model name for query embedding generation.
+            where (Optional[Dict[str, Any]]): ChromaDB where clause for metadata filtering.
+                Example: {"genres_csv": {"$contains": "rock"}}
+
+        Returns:
+            List[Dict[str, Any]]: List of similar tracks with similarity scores and metadata.
+                Each dict contains 'id', 'distance', and 'metadata' keys.
         """
         query_embedding = self.generate_text_embedding(query_text, model_name=model_name).tolist()
         results = self.track_collection.query(query_embeddings=[query_embedding], n_results=top_k, where=where)
@@ -537,11 +918,26 @@ class EmbeddingManager:
         where: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Backward-compatible query entry point used by `db.py`.
+        Backward-compatible semantic query method supporting multiple collections.
 
-        Supported collections:
-        - `lyrics`
-        - `track`, `track_text`, `tracks`
+        This method provides a unified interface for querying different embedding
+        collections. It routes queries to the appropriate collection based on the
+        collection parameter.
+
+        Args:
+            query_text (str): Query text for semantic search.
+            collection (str): Collection to query. Supported values:
+                - "lyrics" or "lyric": Query lyrics collection
+                - "track", "track_text", "tracks": Query track text collection
+            top_k (int): Number of results to return. Default 10.
+            model_name (Optional[str]): Model for query embedding.
+            where (Optional[Dict[str, Any]]): Metadata filtering conditions.
+
+        Returns:
+            List[Dict[str, Any]]: Query results with similarity information.
+
+        Raises:
+            ValueError: If collection is not supported.
         """
         collection_key = (collection or "lyrics").strip().lower()
         if collection_key in {"track", "track_text", "tracks"}:
@@ -570,11 +966,36 @@ class EmbeddingManager:
         model_name: Optional[str] = None,
     ) -> Dict[str, int]:
         """
-        Batch-build embeddings for the intersection of:
-        - MXM BOW tracks
-        - Last.fm-labeled MSD tracks
+        Batch process and embed tracks from MXM BoW data with Last.fm genre mappings.
 
-        You do not need to pass `track_id` manually; it is read from MXM rows.
+        This method performs bulk embedding generation for tracks that have both
+        musiXmatch (MXM) bag-of-words lyrics data and Last.fm genre/tag labels.
+        It processes train and optionally test datasets, merging genre information
+        and generating embeddings for storage.
+
+        The process:
+        1. Load Last.fm genre mappings and MXM vocabulary
+        2. Iterate through MXM rows, filtering for tracks with Last.fm data
+        3. Build track documents with merged metadata
+        4. Generate and store embeddings with progress reporting
+
+        Args:
+            mxm_train_path (str): Path to MXM train dataset file (.txt).
+            lastfm_map_path (str): Path to Last.fm mapping file (.cls or .zip).
+            mxm_test_path (Optional[str]): Path to MXM test dataset file. Default None.
+            min_lastfm_strength (int): Minimum tag strength to include. Default 20.
+            max_lastfm_tags_per_track (Optional[int]): Max tags per track. Default 20.
+            limit (Optional[int]): Maximum tracks to embed. Default None (no limit).
+            progress_every (int): Print progress every N embeddings. Default 5000.
+            model_name (Optional[str]): Embedding model to use.
+
+        Returns:
+            Dict[str, int]: Processing statistics with keys:
+                - 'seen_mxm_rows': Total MXM rows processed
+                - 'matched_lastfm': Tracks with Last.fm data found
+                - 'embedded': Successfully embedded tracks
+                - 'skipped_missing_lastfm': Tracks without Last.fm data
+                - 'skipped_empty_bow': Tracks with empty BoW data
         """
         lastfm_map = load_msd_lastfm_map(
             lastfm_map_path,
@@ -593,6 +1014,7 @@ class EmbeddingManager:
         seen_track_ids = set()
 
         def process_file(path: str) -> bool:
+            # Process a single MXM file, returning True if we hit the limit
             for row in iter_mxm_bow_rows(path):
                 stats["seen_mxm_rows"] += 1
 
@@ -612,6 +1034,7 @@ class EmbeddingManager:
 
                 stats["matched_lastfm"] += 1
 
+                # Build track document with merged metadata
                 track_doc = {
                     "track_id": track_id,
                     "genres": [],
@@ -648,12 +1071,70 @@ class EmbeddingManager:
 
         return stats
 
+#----------------------------
+#----- Langchain ------------
+#----------------------------
+
+class SentenceTransformerEmbeddings:
+    """
+    LangChain-compatible embedding wrapper for SentenceTransformer models.
+
+    This class adapts the EmbeddingManager's text embedding functionality
+    to work with LangChain's embedding interface, enabling integration
+    with LangChain-based applications and pipelines.
+    """
+
+    def __init__(self, manager):
+        """
+        Initialize with an EmbeddingManager instance.
+
+        Args:
+            manager: EmbeddingManager instance to delegate embedding calls to.
+        """
+        self.manager = manager
+    
+    def embed_documents(self, texts):
+        """
+        Embed a list of documents.
+
+        Args:
+            texts: List of text strings to embed.
+
+        Returns:
+            List of embedding vectors (as lists of floats).
+        """
+        return [self.manager.generate_text_embedding(t).to_list() for t in texts]
+    
+    def embed_query(self, text):
+        """
+        Embed a single query text.
+
+        Args:
+            text: Query text to embed.
+
+        Returns:
+            Embedding vector as a list of floats.
+        """
+        return self.manager.generate_text_embedding(text).tolist()
+    
 
 # Module-level singleton (kept for convenience and existing imports)
 _embedding_manager: Optional[EmbeddingManager] = None
 
-
 def get_embedding_manager(persist_directory: Optional[str] = None, chroma_path: Optional[str] = None) -> EmbeddingManager:
+    """
+    Get or create the global EmbeddingManager singleton instance.
+
+    This function maintains a single EmbeddingManager instance for the module,
+    creating it on first access. Subsequent calls return the same instance.
+
+    Args:
+        persist_directory (Optional[str]): Directory for ChromaDB persistence.
+        chroma_path (Optional[str]): Legacy parameter, kept for compatibility.
+
+    Returns:
+        EmbeddingManager: The global singleton instance.
+    """
     # `chroma_path` is kept in the signature for backward compatibility.
     del chroma_path
     global _embedding_manager
@@ -670,6 +1151,19 @@ def query_by_semantics(
     model_name: Optional[str] = None,
     where: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    """
+    Convenience wrapper for semantic querying using the global manager.
+
+    Args:
+        query_text (str): Query text.
+        collection (str): Collection to query ("lyrics", "track_text", etc.).
+        top_k (int): Number of results to return.
+        model_name (Optional[str]): Model for embedding.
+        where (Optional[Dict[str, Any]]): Metadata filters.
+
+    Returns:
+        List[Dict[str, Any]]: Query results.
+    """
     return get_embedding_manager().query_by_semantics(
         query_text=query_text,
         collection=collection,
@@ -685,6 +1179,18 @@ def query_track_embeddings(
     model_name: Optional[str] = None,
     where: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
+    """
+    Convenience wrapper for querying track embeddings using the global manager.
+
+    Args:
+        query_text (str): Query text.
+        top_k (int): Number of results to return.
+        model_name (Optional[str]): Model for embedding.
+        where (Optional[Dict[str, Any]]): Metadata filters.
+
+    Returns:
+        List[Dict[str, Any]]: Query results from track collection.
+    """
     return get_embedding_manager().query_track_embeddings(
         query_text=query_text,
         top_k=top_k,
@@ -698,6 +1204,17 @@ def generate_bow_embedding(
     vocab: Mapping[Any, str],
     model_name: Optional[str] = None,
 ) -> np.ndarray:
+    """
+    Convenience wrapper for generating BoW embeddings using the global manager.
+
+    Args:
+        bow_vector (Mapping[Any, Any]): Bag-of-words data.
+        vocab (Mapping[Any, str]): Word vocabulary.
+        model_name (Optional[str]): Model for embedding.
+
+    Returns:
+        np.ndarray: Embedding vector.
+    """
     return get_embedding_manager().generate_bow_embedding(bow_vector, vocab, model_name=model_name)
 
 
@@ -706,6 +1223,17 @@ def generate_track_embedding(
     mxm_vocab: Optional[Mapping[Any, str]] = None,
     model_name: Optional[str] = None,
 ) -> np.ndarray:
+    """
+    Convenience wrapper for generating track embeddings using the global manager.
+
+    Args:
+        track_document (Mapping[str, Any]): Track document data.
+        mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary.
+        model_name (Optional[str]): Model for embedding.
+
+    Returns:
+        np.ndarray: Embedding vector.
+    """
     return get_embedding_manager().generate_track_embedding(
         track_document,
         mxm_vocab=mxm_vocab,
@@ -719,6 +1247,18 @@ def upsert_track_document_embedding(
     model_name: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
+    """
+    Convenience wrapper for upserting track embeddings using the global manager.
+
+    Args:
+        track_document (Mapping[str, Any]): Track document data.
+        mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary.
+        model_name (Optional[str]): Model for embedding.
+        metadata (Optional[Dict[str, Any]]): Additional metadata.
+
+    Returns:
+        np.ndarray: Generated embedding vector.
+    """
     return get_embedding_manager().upsert_track_document_embedding(
         track_document,
         mxm_vocab=mxm_vocab,
@@ -739,7 +1279,20 @@ def upsert_all_from_mxm_and_lastfm(
     model_name: Optional[str] = None,
 ) -> Dict[str, int]:
     """
-    Module-level convenience wrapper for batch embedding generation.
+    Convenience wrapper for batch MXM/Last.fm processing using the global manager.
+
+    Args:
+        mxm_train_path (str): Path to MXM train data.
+        lastfm_map_path (str): Path to Last.fm mappings.
+        mxm_test_path (Optional[str]): Path to MXM test data.
+        min_lastfm_strength (int): Minimum tag strength.
+        max_lastfm_tags_per_track (Optional[int]): Max tags per track.
+        limit (Optional[int]): Maximum tracks to process.
+        progress_every (int): Progress reporting frequency.
+        model_name (Optional[str]): Model for embedding.
+
+    Returns:
+        Dict[str, int]: Processing statistics.
     """
     return get_embedding_manager().upsert_all_from_mxm_and_lastfm(
         mxm_train_path=mxm_train_path,
@@ -751,3 +1304,87 @@ def upsert_all_from_mxm_and_lastfm(
         progress_every=progress_every,
         model_name=model_name,
     )
+
+
+#----------------------------
+#----- Langchain ------------
+#----------------------------
+    
+def get_chroma_store(persist_directory: Optional[str] = None):
+    """
+    Create a LangChain Chroma vector store using the global EmbeddingManager.
+
+    This function sets up a Chroma vector store that integrates with LangChain,
+    using the track text embeddings collection and SentenceTransformer embeddings.
+
+    Args:
+        persist_directory (Optional[str]): Directory for ChromaDB persistence.
+
+    Returns:
+        Chroma: LangChain Chroma vector store instance.
+    """
+    manager = get_embedding_manager(persist_directory=persist_directory)
+    embedding_fn = SentenceTransformerEmbeddings(manager)
+    return Chroma(
+        collection_name="track_text_embeddings",
+        persist_directory=manager.client._identifier if False else (persist_directory or os.path.join(os.path.dirname(__file__), "chroma_db")),
+        embedding_function=embedding_fn,
+    )
+    
+def get_embedder(model_name: Optional[str] = None):
+    """
+    Get the sentence transformer model used for text embedding.
+
+    This function provides direct access to the underlying SentenceTransformer
+    model instance used by the EmbeddingManager for generating embeddings.
+
+    Args:
+        model_name (Optional[str]): Name of the model to retrieve. If None,
+            uses the default or cached model.
+
+    Returns:
+        SentenceTransformer: The loaded sentence transformer model instance.
+    """
+    return get_embedding_manager()._get_text_model(model_name=model_name)
+    
+def semantic_search(query: str, k: int = 50, model_name: Optional[str] = None, 
+                    where: Optional[Dict[str, Any]] = None,):
+    """
+    Perform semantic search for tracks using natural language queries.
+
+    This function searches the track text embeddings collection for tracks
+    that are semantically similar to the provided query text. Results are
+    ranked by embedding similarity.
+
+    Args:
+        query (str): Natural language query text (e.g., "rock guitar solo").
+        k (int): Number of top results to return. Default 50.
+        model_name (Optional[str]): Model name for query embedding generation.
+        where (Optional[Dict[str, Any]]): ChromaDB metadata filtering conditions.
+            Example: {"genres_csv": {"$contains": "rock"}}
+
+    Returns:
+        List[Dict[str, Any]]: List of similar tracks with similarity scores and metadata.
+            Each dict contains 'id', 'distance', and 'metadata' keys.
+    """
+    return get_embedding_manager().query_track_embeddings(query_text=query,
+                                                            top_k=k,
+                                                            model_name=model_name,
+                                                            where=where,)
+    
+def get_chroma_store(persist_directory: Optional[str] = None):
+    """
+    Get the ChromaDB collection for track text embeddings.
+
+    This function provides direct access to the underlying ChromaDB collection
+    used for storing track text embeddings. Useful for advanced ChromaDB operations
+    that require direct collection access.
+
+    Args:
+        persist_directory (Optional[str]): Directory for ChromaDB persistence.
+            If provided, ensures the manager is initialized with this directory.
+
+    Returns:
+        chromadb.Collection: The ChromaDB collection for track text embeddings.
+    """
+    return get_embedding_manager(persist_directory=persist_directory).track_collection
