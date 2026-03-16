@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import zipfile
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import chromadb
@@ -350,6 +351,19 @@ def iter_mxm_bow_rows(path: str):
                 "mxm_tid": mxm_tid,
                 "bow_vector": bow_vector,
             }
+
+
+def track_id_to_msd_h5_path(track_id: str, msd_root: str) -> Path:
+    """
+    Resolve an MSD track ID to its expected HDF5 path inside MillionSongSubset.
+
+    MSD subset files are stored as:
+    <root>/<track_id[2]>/<track_id[3]>/<track_id[4]>/<track_id>.h5
+    """
+    clean_track_id = _clean_text(track_id)
+    if len(clean_track_id) < 5:
+        raise ValueError(f"Invalid MSD track_id: {track_id!r}")
+    return Path(msd_root) / clean_track_id[2] / clean_track_id[3] / clean_track_id[4] / f"{clean_track_id}.h5"
 
 
 class EmbeddingManager:
@@ -959,6 +973,7 @@ class EmbeddingManager:
         mxm_train_path: str,
         lastfm_map_path: str,
         mxm_test_path: Optional[str] = None,
+        msd_subset_root: Optional[str] = None,
         min_lastfm_strength: int = 20,
         max_lastfm_tags_per_track: Optional[int] = 20,
         limit: Optional[int] = None,
@@ -983,6 +998,8 @@ class EmbeddingManager:
             mxm_train_path (str): Path to MXM train dataset file (.txt).
             lastfm_map_path (str): Path to Last.fm mapping file (.cls or .zip).
             mxm_test_path (Optional[str]): Path to MXM test dataset file. Default None.
+            msd_subset_root (Optional[str]): If provided, only embed tracks that have
+                a matching `.h5` file in this MillionSongSubset root directory.
             min_lastfm_strength (int): Minimum tag strength to include. Default 20.
             max_lastfm_tags_per_track (Optional[int]): Max tags per track. Default 20.
             limit (Optional[int]): Maximum tracks to embed. Default None (no limit).
@@ -992,10 +1009,13 @@ class EmbeddingManager:
         Returns:
             Dict[str, int]: Processing statistics with keys:
                 - 'seen_mxm_rows': Total MXM rows processed
+                - 'total_msd_tracks': Total `.h5` tracks present in MillionSongSubset
+                - 'matched_msd_subset': MXM tracks with a matching `.h5` in MillionSongSubset
                 - 'matched_lastfm': Tracks with Last.fm data found
                 - 'embedded': Successfully embedded tracks
-                - 'skipped_missing_lastfm': Tracks without Last.fm data
+                - 'missing_lastfm': Tracks without Last.fm data
                 - 'skipped_empty_bow': Tracks with empty BoW data
+                - 'skipped_missing_msd_subset': Tracks missing from MillionSongSubset
         """
         lastfm_map = load_msd_lastfm_map(
             lastfm_map_path,
@@ -1003,13 +1023,18 @@ class EmbeddingManager:
             max_tags_per_track=max_lastfm_tags_per_track,
         )
         mxm_vocab = load_mxm_vocab(mxm_train_path)
+        msd_root = Path(msd_subset_root) if msd_subset_root else None
+        total_msd_tracks = sum(1 for _ in msd_root.rglob("*.h5")) if msd_root is not None else 0
 
         stats = {
             "seen_mxm_rows": 0,
+            "total_msd_tracks": total_msd_tracks,
+            "matched_msd_subset": 0,
             "matched_lastfm": 0,
             "embedded": 0,
-            "skipped_missing_lastfm": 0,
+            "missing_lastfm": 0,
             "skipped_empty_bow": 0,
+            "skipped_missing_msd_subset": 0,
         }
         seen_track_ids = set()
 
@@ -1023,16 +1048,22 @@ class EmbeddingManager:
                     continue
                 seen_track_ids.add(track_id)
 
+                if msd_root is not None:
+                    h5_path = track_id_to_msd_h5_path(track_id, str(msd_root))
+                    if not h5_path.exists():
+                        stats["skipped_missing_msd_subset"] += 1
+                        continue
+                    stats["matched_msd_subset"] += 1
+                        
                 if not row["bow_vector"]:
                     stats["skipped_empty_bow"] += 1
                     continue
 
                 lastfm_entry = lastfm_map.get(track_id)
                 if not lastfm_entry:
-                    stats["skipped_missing_lastfm"] += 1
-                    continue
-
-                stats["matched_lastfm"] += 1
+                    stats["missing_lastfm"] += 1
+                else:
+                    stats["matched_lastfm"] += 1
 
                 # Build track document with merged metadata
                 track_doc = {
@@ -1050,7 +1081,8 @@ class EmbeddingManager:
                     },
                 }
 
-                track_doc = merge_lastfm_tags_into_track_document(track_doc, lastfm_entry)
+                if lastfm_entry:
+                    track_doc = merge_lastfm_tags_into_track_document(track_doc, lastfm_entry)
                 self.upsert_track_document_embedding(
                     track_doc,
                     mxm_vocab=mxm_vocab,
@@ -1272,6 +1304,7 @@ def upsert_all_from_mxm_and_lastfm(
     mxm_train_path: str,
     lastfm_map_path: str,
     mxm_test_path: Optional[str] = None,
+    msd_subset_root: Optional[str] = None,
     min_lastfm_strength: int = 20,
     max_lastfm_tags_per_track: Optional[int] = 20,
     limit: Optional[int] = None,
@@ -1285,6 +1318,7 @@ def upsert_all_from_mxm_and_lastfm(
         mxm_train_path (str): Path to MXM train data.
         lastfm_map_path (str): Path to Last.fm mappings.
         mxm_test_path (Optional[str]): Path to MXM test data.
+        msd_subset_root (Optional[str]): MillionSongSubset root to filter against.
         min_lastfm_strength (int): Minimum tag strength.
         max_lastfm_tags_per_track (Optional[int]): Max tags per track.
         limit (Optional[int]): Maximum tracks to process.
@@ -1298,6 +1332,7 @@ def upsert_all_from_mxm_and_lastfm(
         mxm_train_path=mxm_train_path,
         lastfm_map_path=lastfm_map_path,
         mxm_test_path=mxm_test_path,
+        msd_subset_root=msd_subset_root,
         min_lastfm_strength=min_lastfm_strength,
         max_lastfm_tags_per_track=max_lastfm_tags_per_track,
         limit=limit,

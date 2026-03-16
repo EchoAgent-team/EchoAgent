@@ -32,6 +32,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to Last.fm map (.cls or .zip)",
     )
     parser.add_argument(
+        "--msd-subset-root",
+        default=str(repo_root / "data" / "MillionSongSubset"),
+        help="Only embed tracks with matching .h5 files under this MillionSongSubset root",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -66,6 +71,7 @@ def main() -> int:
             mxm_train_path=args.train,
             mxm_test_path=args.test,
             lastfm_map_path=args.lastfm,
+            msd_subset_root=args.msd_subset_root,
             progress_every=args.progress_every,
             limit=args.limit,
         )
