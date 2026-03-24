@@ -47,7 +47,7 @@ class Album(Base):
     artist = relationship("Artist", back_populates="albums")
     tracks = relationship("Track", back_populates="album")
 
-class Song(Base):
+class Track(Base):
     """Main songs table storing basic song metadata."""
     __tablename__ = "tracks"
 
