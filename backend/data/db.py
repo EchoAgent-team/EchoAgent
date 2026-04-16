@@ -15,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from sqlalchemy.sql import func
+from sqlalchemy.engine import Engine
 import os
 
 Base = declarative_base()
@@ -98,12 +99,25 @@ def get_database_url() -> str:
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         return db_url
-    # Default to SQLite in backend/data directory
-    db_dir = os.path.join(os.path.dirname(__file__))
+
+    db_dir = os.path.dirname(__file__)
     os.makedirs(db_dir, exist_ok=True)
-    db_path = os.path.join(db_dir, "echoagent.db")
+    db_path = os.path.join(db_dir, "music_relational.db")
     return f"sqlite:///{db_path}"
 
+def get_engine(database_url: Optional[str] = None) -> Engine:
+    """
+    Create and return a SQLAlchemy engine.
+    """
+    url = database_url or get_database_url()
+    return create_engine(url, echo=False, future=True)
+
+def get_session_factory(database_url: Optional[str] = None) -> sessionmaker:
+    """
+    Return a configured SQLAlchemy session factory.
+    """
+    engine = get_engine(database_url)
+    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db(database_url: Optional[str] = None) -> None:
     """
@@ -112,10 +126,9 @@ def init_db(database_url: Optional[str] = None) -> None:
     Args:
         database_url: Optional database URL. If not provided, uses get_database_url().
     """
-    url = database_url or get_database_url()
-    engine = create_engine(url, echo=False)
+    engine = get_engine(database_url)
     Base.metadata.create_all(engine)
-    print(f"Database initialized at: {url}")
+    print(f"Database initialized at: {database_url or get_database_url()}")
 
 
 def get_db_session(database_url: Optional[str] = None) -> Session:
@@ -128,9 +141,7 @@ def get_db_session(database_url: Optional[str] = None) -> Session:
     Returns:
         SQLAlchemy Session object
     """
-    url = database_url or get_database_url()
-    engine = create_engine(url, echo=False)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    SessionLocal = get_session_factory(database_url)
     return SessionLocal()
 
 
@@ -140,14 +151,13 @@ class DBSession:
     
     def __init__(self, database_url: Optional[str] = None):
         self.database_url = database_url or get_database_url()
-        self.engine = create_engine(self.database_url, echo=False)
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        self.SessionLocal = get_session_factory(self.database_url)
         self.session: Optional[Session] = None
-    
+
     def __enter__(self) -> Session:
         self.session = self.SessionLocal()
         return self.session
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             if exc_type:
@@ -211,20 +221,101 @@ def query_tracks_by_filters(
     
     return query.limit(limit).all()
 
+def serialize_track(track: Track) -> Dict[str, Any]:
+    """
+    Convert a Track ORM object into a plain dictionary for downstream use.
+    """
+    return {
+        "track_id": track.track_id,
+        "title": track.title,
+        "artist_id": track.artist_id,
+        "artist_name": track.artist.name if track.artist else None,
+        "release_id": track.release_id,
+        "album_title": track.album.title if track.album else None,
+        "year": track.album.year if track.album else None,
+        "seed_genre": track.seed_genre,
+        "top_tags_json": track.top_tags_json,
+        "duration": track.audio_feature.duration if track.audio_feature else None,
+        "tempo": track.audio_feature.tempo if track.audio_feature else None,
+        "danceability": track.audio_feature.danceability if track.audio_feature else None,
+        "energy": track.audio_feature.energy if track.audio_feature else None,
+        "loudness": track.audio_feature.loudness if track.audio_feature else None,
+        "mode": track.audio_feature.mode if track.audio_feature else None,
+    }
+
+
+def query_tracks(
+    filters: Dict[str, Any],
+    limit: int = 100,
+    database_url: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Public retrieval helper used by the retrieval layer.
+
+    Expected filter keys:
+        artist_id
+        min_year
+        max_year
+        seed_genre
+        min_energy
+        max_energy
+        min_danceability
+        max_danceability
+        min_tempo
+        max_tempo
+
+    Returns:
+        List of serialized track dictionaries.
+    """
+    SessionLocal = get_session_factory(database_url)
+
+    with SessionLocal() as session:
+        tracks = query_tracks_by_filters(
+            session=session,
+            artist_id=filters.get("artist_id"),
+            min_year=filters.get("min_year"),
+            max_year=filters.get("max_year"),
+            seed_genre=filters.get("seed_genre"),
+            min_energy=filters.get("min_energy"),
+            max_energy=filters.get("max_energy"),
+            min_danceability=filters.get("min_danceability"),
+            max_danceability=filters.get("max_danceability"),
+            min_tempo=filters.get("min_tempo"),
+            max_tempo=filters.get("max_tempo"),
+            limit=limit,
+        )
+        return [serialize_track(track) for track in tracks]
+
 # Example: Get embed-ready data for embeddings.py
 def get_embed_data(session: Session) -> List[Dict]:
     """
     Get data for embeddings.py: tracks + tags + lyrics + audio.
     """
-    return session.query(
-        Track.track_id,
-        Track.seed_genre,
-        Track.top_tags_json,
-        Lyrics.bow_vector,
-        AudioFeature.energy,
-        AudioFeature.tempo,
-        # Add more as needed
-    ).outerjoin(Lyrics).outerjoin(AudioFeature).all()
+    rows = (
+        session.query(
+            Track.track_id,
+            Track.seed_genre,
+            Track.top_tags_json,
+            Lyrics.bow_vector,
+            AudioFeature.energy,
+            AudioFeature.tempo,
+        )
+        .outerjoin(Lyrics)
+        .outerjoin(AudioFeature)
+        .all()
+    )
+
+    return [
+        {
+            "track_id": row.track_id,
+            "seed_genre": row.seed_genre,
+            "top_tags_json": row.top_tags_json,
+            "bow_vector": row.bow_vector,
+            "energy": row.energy,
+            "tempo": row.tempo,
+        }
+        for row in rows
+    ]
 
 if __name__ == "__main__":
     init_db()
