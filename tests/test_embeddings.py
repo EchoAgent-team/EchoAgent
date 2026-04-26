@@ -60,7 +60,7 @@ def main() -> int:
         sys.path.insert(0, str(repo_root))
 
     try:
-        from backend.data.embeddings import upsert_all_from_mxm_and_lastfm
+        from backend.data.vector_indexing import upsert_all_from_mxm_and_lastfm
     except ModuleNotFoundError as exc:
         print(f"Import error: {exc}")
         print("Install required packages first (e.g. chromadb, sentence-transformers, numpy).")

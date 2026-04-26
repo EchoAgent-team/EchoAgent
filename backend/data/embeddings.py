@@ -1,25 +1,20 @@
 """
-Simple vector embedding utilities for EchoAgent.
+Vector embedding utilities for EchoAgent.
 
-What this file does:
-- Manage ChromaDB collections (`track_text`, `lyrics`)
-- Build embeddings from TrackDocument dicts
-- Convert MXM bag-of-words (BoW) into compact text
-- Load and apply Last.fm seed genre from `msd_lastfm_map.cls` / `.zip`
-
+This module is responsible for:
+- embedder loading
+- LangChain/Chroma vector-store access
+- track embedding upsert
+- semantic query
 """
 
 from __future__ import annotations
 
 import os
-import re
-import zipfile
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 import numpy as np
 from .text_utils import clean_text, clean_token, to_list, unique_tokens
-from .vector_indexing import parse_msd_lastfm_map_line, load_msd_lastfm_map, load_mxm_vocab, iter_mxm_bow_rows, track_id_to_msd_h5_path, merge_lastfm_tags_into_track_document
-from .retrieval_text import build_retrieval_text, bow_to_text
+from .retrieval_text import bow_to_text
 
 import chromadb
 from chromadb.config import Settings
@@ -33,23 +28,15 @@ class EmbeddingManager:
     """
     Manages vector embeddings for track documents using ChromaDB and sentence transformers.
 
-    This class provides a comprehensive interface for handling text embeddings in the EchoAgent
-    music recommendation system. It manages two ChromaDB collections: 'track_text_embeddings'
-    for full track document embeddings and 'lyrics_embeddings' for legacy lyrics-only embeddings.
+    This class provides the vector-facing interface for embeddings in EchoAgent.
+    It manages two ChromaDB collections: 'track_text_embeddings' for track retrieval
+    and 'lyrics_embeddings' for legacy compatibility.
 
     Key functionalities:
-    - Loading and managing sentence transformer models for text embedding generation
-    - Converting track documents (including metadata, genres, and bag-of-words lyrics) into
-      embedding vectors
-    - Storing and querying embeddings in ChromaDB collections
-    - Batch processing of MXM (musiXmatch) bag-of-words data with Last.fm genre mappings
-    - Providing backward-compatible APIs for existing code
-
-    The primary workflow involves:
-    1. Building embedding text from track documents using genres and MXM BoW data
-    2. Generating embeddings using sentence transformers
-    3. Storing embeddings with metadata in ChromaDB
-    4. Querying for semantically similar tracks
+    - Loading and caching sentence transformer models
+    - Converting precomputed retrieval text into embedding vectors
+    - Storing embeddings in ChromaDB
+    - Querying for semantically similar tracks
 
     Attributes:
         client (chromadb.PersistentClient): Persistent ChromaDB client for database operations
@@ -65,13 +52,12 @@ class EmbeddingManager:
             "track_id": "TR123",
             "title": "Song Title",
             "artist_name": "Artist Name",
-            "genres": ["rock", "pop"],
-            "lyrics": {"bow_vector": {1: 5, 2: 3}}
+            "retrieval_text": {"embedding_text": "love city rain drive tonight"}
         }
-        embedding = manager.upsert_track_document_embedding(track_doc, mxm_vocab=vocab)
+        embedding = manager.upsert_track_embedding(track_doc)
 
         # Query for similar tracks
-        results = manager.query_track_embeddings("rock guitar solo", top_k=5)
+        results = manager.query_track_embeddings("late night city drive", top_k=5)
     """
 
     def __init__(self, persist_directory: Optional[str] = None):
@@ -141,10 +127,6 @@ class EmbeddingManager:
             self._text_model = SentenceTransformer(model_name)
             self._text_model_name = model_name
         return self._text_model
-
-    # --------------------------
-    # TrackDocument helpers
-    # --------------------------
 
     def track_metadata(self, track_document: Mapping[str, Any]) -> Dict[str, Any]:
         """
@@ -277,7 +259,7 @@ class EmbeddingManager:
         Returns:
             np.ndarray: Embedding vector for the BoW data.
         """
-        text = self.bow_to_text(bow_vector, vocab)
+        text = bow_to_text(bow_vector, vocab)
         return self.generate_text_embedding(text, model_name=model_name)
 
     def generate_track_embedding(
@@ -290,25 +272,26 @@ class EmbeddingManager:
         Generate an embedding vector from a complete track document.
 
         This is the primary method for creating embeddings from track documents.
-        It builds embedding text from the track document and converts it to a vector.
+        It expects retrieval text to be precomputed and stored on the document.
 
         Args:
             track_document (Mapping[str, Any]): Complete track document with metadata,
                 genres, and lyrics information.
-            mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary for BoW conversion.
-                Required if the track has BoW lyrics data.
+            mxm_vocab (Optional[Mapping[Any, str]]): Unused in strict mode.
+                Kept temporarily for compatibility with older call sites.
             model_name (Optional[str]): Model name for embedding generation.
 
         Returns:
             np.ndarray: Dense embedding vector representing the track.
 
         Raises:
-            ValueError: If no embedding text can be built from the track document.
+            ValueError: If retrieval_text.embedding_text is missing.
         """
-        # Core TrackDocument -> text -> vector step.
-        text = self.build_track_embedding_text(track_document, mxm_vocab=mxm_vocab)
+        del mxm_vocab
+        retrieval_text = (track_document or {}).get("retrieval_text") or {}
+        text = clean_text(retrieval_text.get("embedding_text"))
         if not text:
-            raise ValueError("No embedding text could be built from TrackDocument")
+            raise ValueError("track_document.retrieval_text.embedding_text is required")
         return self.generate_text_embedding(text, model_name=model_name)
 
     def _upsert(self, collection, item_id: str, embedding: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -359,7 +342,7 @@ class EmbeddingManager:
         md["song_id"] = song_id
         self._upsert(self.lyrics_collection, song_id, embedding, md)
 
-    def upsert_track_document_embedding(
+    def upsert_track_embedding(
         self,
         track_document: Mapping[str, Any],
         mxm_vocab: Optional[Mapping[Any, str]] = None,
@@ -505,142 +488,6 @@ class EmbeddingManager:
         results = coll.query(query_embeddings=[query_embedding], n_results=top_k, where=where)
         return self._format_query_results(results)
 
-    def upsert_all_from_mxm_and_lastfm(
-        self,
-        *,
-        mxm_train_path: str,
-        lastfm_map_path: str,
-        mxm_test_path: Optional[str] = None,
-        msd_subset_root: Optional[str] = None,
-        min_lastfm_strength: int = 20,
-        max_lastfm_tags_per_track: Optional[int] = 20,
-        limit: Optional[int] = None,
-        progress_every: int = 5000,
-        model_name: Optional[str] = None,
-    ) -> Dict[str, int]:
-        """
-        Batch process and embed tracks from MXM BoW data with Last.fm genre mappings.
-
-        This method performs bulk embedding generation for tracks that have both
-        musiXmatch (MXM) bag-of-words lyrics data and Last.fm genre/tag labels.
-        It processes train and optionally test datasets, merging genre information
-        and generating embeddings for storage.
-
-        The process:
-        1. Load Last.fm genre mappings and MXM vocabulary
-        2. Iterate through MXM rows, filtering for tracks with Last.fm data
-        3. Build track documents with merged metadata
-        4. Generate and store embeddings with progress reporting
-
-        Args:
-            mxm_train_path (str): Path to MXM train dataset file (.txt).
-            lastfm_map_path (str): Path to Last.fm mapping file (.cls or .zip).
-            mxm_test_path (Optional[str]): Path to MXM test dataset file. Default None.
-            msd_subset_root (Optional[str]): If provided, only embed tracks that have
-                a matching `.h5` file in this MillionSongSubset root directory.
-            min_lastfm_strength (int): Minimum tag strength to include. Default 20.
-            max_lastfm_tags_per_track (Optional[int]): Max tags per track. Default 20.
-            limit (Optional[int]): Maximum tracks to embed. Default None (no limit).
-            progress_every (int): Print progress every N embeddings. Default 5000.
-            model_name (Optional[str]): Embedding model to use.
-
-        Returns:
-            Dict[str, int]: Processing statistics with keys:
-                - 'seen_mxm_rows': Total MXM rows processed
-                - 'total_msd_tracks': Total `.h5` tracks present in MillionSongSubset
-                - 'matched_msd_subset': MXM tracks with a matching `.h5` in MillionSongSubset
-                - 'matched_lastfm': Tracks with Last.fm data found
-                - 'embedded': Successfully embedded tracks
-                - 'missing_lastfm': Tracks without Last.fm data
-                - 'skipped_empty_bow': Tracks with empty BoW data
-                - 'skipped_missing_msd_subset': Tracks missing from MillionSongSubset
-        """
-        lastfm_map = load_msd_lastfm_map(
-            lastfm_map_path,
-            min_strength=min_lastfm_strength,
-            max_tags_per_track=max_lastfm_tags_per_track,
-        )
-        mxm_vocab = load_mxm_vocab(mxm_train_path)
-        msd_root = Path(msd_subset_root) if msd_subset_root else None
-        total_msd_tracks = sum(1 for _ in msd_root.rglob("*.h5")) if msd_root is not None else 0
-
-        stats = {
-            "seen_mxm_rows": 0,
-            "total_msd_tracks": total_msd_tracks,
-            "matched_msd_subset": 0,
-            "matched_lastfm": 0,
-            "embedded": 0,
-            "missing_lastfm": 0,
-            "skipped_empty_bow": 0,
-            "skipped_missing_msd_subset": 0,
-        }
-        seen_track_ids = set()
-
-        def process_file(path: str) -> bool:
-            # Process a single MXM file, returning True if we hit the limit
-            for row in iter_mxm_bow_rows(path):
-                stats["seen_mxm_rows"] += 1
-
-                track_id = row["track_id"]
-                if not track_id or track_id in seen_track_ids:
-                    continue
-                seen_track_ids.add(track_id)
-
-                if msd_root is not None:
-                    h5_path = track_id_to_msd_h5_path(track_id, str(msd_root))
-                    if not h5_path.exists():
-                        stats["skipped_missing_msd_subset"] += 1
-                        continue
-                    stats["matched_msd_subset"] += 1
-                        
-                if not row["bow_vector"]:
-                    stats["skipped_empty_bow"] += 1
-                    continue
-
-                lastfm_entry = lastfm_map.get(track_id)
-                if not lastfm_entry:
-                    stats["missing_lastfm"] += 1
-                else:
-                    stats["matched_lastfm"] += 1
-
-                # Build track document with merged metadata
-                track_doc = {
-                    "track_id": track_id,
-                    "genres": [],
-                    "lyrics": {
-                        "bow_vector": row["bow_vector"],
-                    },
-                    "source_ids": {
-                        "mxm_tid": row["mxm_tid"],
-                        "msd_track_id": track_id,
-                    },
-                    "provenance": {
-                        "lyrics_source": "mxm",
-                    },
-                }
-
-                if lastfm_entry:
-                    track_doc = merge_lastfm_tags_into_track_document(track_doc, lastfm_entry)
-                self.upsert_track_document_embedding(
-                    track_doc,
-                    mxm_vocab=mxm_vocab,
-                    model_name=model_name,
-                )
-                stats["embedded"] += 1
-
-                if progress_every and stats["embedded"] % progress_every == 0:
-                    print(f"Embedded {stats['embedded']} tracks...")
-
-                if limit is not None and stats["embedded"] >= limit:
-                    return True
-            return False
-
-        stop = process_file(mxm_train_path)
-        if not stop and mxm_test_path:
-            process_file(mxm_test_path)
-
-        return stats
-
 #----------------------------
 #----- Langchain ------------
 #----------------------------
@@ -673,7 +520,7 @@ class SentenceTransformerEmbeddings:
         Returns:
             List of embedding vectors (as lists of floats).
         """
-        return [self.manager.generate_text_embedding(t).to_list() for t in texts]
+        return [self.manager.generate_text_embedding(t).tolist() for t in texts]
     
     def embed_query(self, text):
         """
@@ -811,7 +658,7 @@ def generate_track_embedding(
     )
 
 
-def upsert_track_document_embedding(
+def upsert_track_embedding(
     track_document: Mapping[str, Any],
     mxm_vocab: Optional[Mapping[Any, str]] = None,
     model_name: Optional[str] = None,
@@ -829,7 +676,7 @@ def upsert_track_document_embedding(
     Returns:
         np.ndarray: Generated embedding vector.
     """
-    return get_embedding_manager().upsert_track_document_embedding(
+    return get_embedding_manager().upsert_track_embedding(
         track_document,
         mxm_vocab=mxm_vocab,
         model_name=model_name,
@@ -837,53 +684,11 @@ def upsert_track_document_embedding(
     )
 
 
-def upsert_all_from_mxm_and_lastfm(
-    *,
-    mxm_train_path: str,
-    lastfm_map_path: str,
-    mxm_test_path: Optional[str] = None,
-    msd_subset_root: Optional[str] = None,
-    min_lastfm_strength: int = 20,
-    max_lastfm_tags_per_track: Optional[int] = 20,
-    limit: Optional[int] = None,
-    progress_every: int = 5000,
-    model_name: Optional[str] = None,
-) -> Dict[str, int]:
-    """
-    Convenience wrapper for batch MXM/Last.fm processing using the global manager.
-
-    Args:
-        mxm_train_path (str): Path to MXM train data.
-        lastfm_map_path (str): Path to Last.fm mappings.
-        mxm_test_path (Optional[str]): Path to MXM test data.
-        msd_subset_root (Optional[str]): MillionSongSubset root to filter against.
-        min_lastfm_strength (int): Minimum tag strength.
-        max_lastfm_tags_per_track (Optional[int]): Max tags per track.
-        limit (Optional[int]): Maximum tracks to process.
-        progress_every (int): Progress reporting frequency.
-        model_name (Optional[str]): Model for embedding.
-
-    Returns:
-        Dict[str, int]: Processing statistics.
-    """
-    return get_embedding_manager().upsert_all_from_mxm_and_lastfm(
-        mxm_train_path=mxm_train_path,
-        lastfm_map_path=lastfm_map_path,
-        mxm_test_path=mxm_test_path,
-        msd_subset_root=msd_subset_root,
-        min_lastfm_strength=min_lastfm_strength,
-        max_lastfm_tags_per_track=max_lastfm_tags_per_track,
-        limit=limit,
-        progress_every=progress_every,
-        model_name=model_name,
-    )
-
-
 #----------------------------
 #----- Langchain ------------
 #----------------------------
     
-def get_chroma_store(persist_directory: Optional[str] = None):
+def get_vector_store(persist_directory: Optional[str] = None):
     """
     Create a LangChain Chroma vector store using the global EmbeddingManager.
 
@@ -945,19 +750,3 @@ def semantic_search(query: str, k: int = 50, model_name: Optional[str] = None,
                                                             model_name=model_name,
                                                             where=where,)
     
-def get_chroma_store(persist_directory: Optional[str] = None):
-    """
-    Get the ChromaDB collection for track text embeddings.
-
-    This function provides direct access to the underlying ChromaDB collection
-    used for storing track text embeddings. Useful for advanced ChromaDB operations
-    that require direct collection access.
-
-    Args:
-        persist_directory (Optional[str]): Directory for ChromaDB persistence.
-            If provided, ensures the manager is initialized with this directory.
-
-    Returns:
-        chromadb.Collection: The ChromaDB collection for track text embeddings.
-    """
-    return get_embedding_manager(persist_directory=persist_directory).track_collection
