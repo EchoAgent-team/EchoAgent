@@ -15,355 +15,18 @@ import os
 import re
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+import numpy as np
+from .text_utils import clean_text, clean_token, to_list, unique_tokens
+from .vector_indexing import parse_msd_lastfm_map_line, load_msd_lastfm_map, load_mxm_vocab, iter_mxm_bow_rows, track_id_to_msd_h5_path, merge_lastfm_tags_into_track_document
+from .retrieval_text import build_retrieval_text, bow_to_text
 
 import chromadb
 from chromadb.config import Settings
 from langchain_chroma import Chroma
-import numpy as np
 
 
 DEFAULT_TEXT_MODEL = "all-MiniLM-L6-v2"
-
-
-def _clean_text(value: Any) -> str:
-    """
-    Clean and normalize text values for consistent processing.
-
-    This function handles None values, converts to string, removes excess whitespace,
-    and strips leading/trailing whitespace.
-
-    Args:
-        value (Any): Input value to clean.
-
-    Returns:
-        str: Cleaned text string. Empty string if input is None.
-    """
-    if value is None:
-        return ""
-    return re.sub(r"\s+", " ", str(value)).strip()
-
-
-def _clean_token(value: Any) -> str:
-    """
-    Clean and normalize text for use as tokens or identifiers.
-
-    This function cleans text and then normalizes it for use as tokens by:
-    - Converting to lowercase
-    - Replacing whitespace with underscores
-    - Removing invalid characters (keeping only alphanumeric, underscore, colon, hyphen, dot, plus)
-    - Stripping leading/trailing underscores
-
-    Args:
-        value (Any): Input value to tokenize.
-
-    Returns:
-        str: Clean token string. Empty string if input is None or becomes empty after cleaning.
-    """
-    text = _clean_text(value).lower()
-    if not text:
-        return ""
-    text = re.sub(r"\s+", "_", text)
-    text = re.sub(r"[^a-z0-9_:/\-\.\+]", "", text)
-    return text.strip("_")
-
-
-def _to_list(value: Any) -> List[Any]:
-    """
-    Convert a value to a list if it isn't already.
-
-    Handles None, single values, and existing iterables.
-
-    Args:
-        value (Any): Value to convert to list.
-
-    Returns:
-        List[Any]: List containing the value(s). Empty list if value is None.
-    """
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        return list(value)
-    return [value]
-
-
-def _unique_tokens(values: Iterable[Any]) -> List[str]:
-    """
-    Extract unique, cleaned tokens from an iterable of values.
-
-    Processes each value through _clean_token(), removes duplicates while
-    preserving order, and filters out empty tokens.
-
-    Args:
-        values (Iterable[Any]): Values to process into tokens.
-
-    Returns:
-        List[str]: List of unique, non-empty tokens in order of first appearance.
-    """
-    out: List[str] = []
-    seen = set()
-    for v in values:
-        token = _clean_token(v)
-        if not token or token in seen:
-            continue
-        seen.add(token)
-        out.append(token)
-    return out
-
-
-def parse_msd_lastfm_map_line(line: str, min_strength: int = 20) -> Optional[Tuple[str, Dict[str, Any]]]:
-    """
-    Parse a single line from the MSD Last.fm mapping file.
-
-    The file format is tab-separated with:
-    track_id<TAB>seed_genre<TAB>tag1<TAB>strength1<TAB>tag2<TAB>strength2...
-
-    This function extracts the track ID, seed genre, and tag/strength pairs,
-    filtering tags by minimum strength.
-
-    Args:
-        line (str): Raw line from the mapping file.
-        min_strength (int): Minimum tag strength to include. Default 20.
-
-    Returns:
-        Optional[Tuple[str, Dict[str, Any]]]: Tuple of (track_id, mapping_dict) if valid,
-            None if line is invalid or empty. The mapping_dict contains:
-            - 'seed_genre': Cleaned genre string or None
-            - 'tags': List of tag names (filtered by strength)
-            - 'tag_strengths': Dict of tag -> strength mappings
-    """
-    line = (line or "").strip()
-    if not line or line.startswith("#"):
-        return None
-
-    parts = line.split("\t")
-    if len(parts) < 2:
-        return None
-
-    track_id = parts[0].strip()
-    seed_genre = _clean_token(parts[1]) or None
-
-    tags: List[str] = []
-    tag_strengths: Dict[str, int] = {}
-    tail = parts[2:]
-
-    # Tail is tag/strength pairs.
-    for i in range(0, len(tail) - 1, 2):
-        tag = _clean_token(tail[i])
-        try:
-            strength = int(tail[i + 1])
-        except (TypeError, ValueError):
-            continue
-        if not tag or strength < min_strength:
-            continue
-        if tag not in tag_strengths:
-            tags.append(tag)
-        tag_strengths[tag] = strength
-
-    return track_id, {"seed_genre": seed_genre, "tags": tags, "tag_strengths": tag_strengths}
-
-
-def load_msd_lastfm_map(
-    path: str,
-    min_strength: int = 20,
-    max_tags_per_track: Optional[int] = 20,
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Load Last.fm genre and tag mappings from MSD dataset files.
-
-    Supports both plain .cls files and .zip archives containing .cls files.
-    Processes each line to extract track IDs, seed genres, and tag/strength pairs.
-
-    Args:
-        path (str): Path to .cls file or .zip archive containing .cls files.
-        min_strength (int): Minimum tag strength to include. Default 20.
-        max_tags_per_track (Optional[int]): Maximum tags to keep per track. Default 20.
-
-    Returns:
-        Dict[str, Dict[str, Any]]: Mapping of track_id to genre/tag data.
-            Each value dict contains 'seed_genre', 'tags', and 'tag_strengths'.
-
-    Raises:
-        FileNotFoundError: If the specified path does not exist.
-    """
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-
-    out: Dict[str, Dict[str, Any]] = {}
-
-    def consume_lines(lines: Iterable[str]) -> None:
-        for line in lines:
-            parsed = parse_msd_lastfm_map_line(line, min_strength=min_strength)
-            if parsed is None:
-                continue
-            track_id, item = parsed
-            if max_tags_per_track is not None:
-                kept = item.get("tags", [])[:max_tags_per_track]
-                item["tags"] = kept
-                keep_set = set(kept)
-                item["tag_strengths"] = {
-                    k: v for k, v in item.get("tag_strengths", {}).items() if k in keep_set
-                }
-            out[track_id] = item
-
-    if path.lower().endswith(".zip"):
-        # Handle zip archives containing .cls files
-        with zipfile.ZipFile(path, "r") as zf:
-            names = [n for n in zf.namelist() if not n.endswith("/")]
-            cls_names = [n for n in names if n.lower().endswith(".cls")]
-            for name in (cls_names or names):
-                with zf.open(name, "r") as fh:
-                    consume_lines((b.decode("utf-8", errors="ignore") for b in fh))
-    else:
-        # Handle plain .cls files
-        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-            consume_lines(fh)
-
-    return out
-
-
-def merge_lastfm_tags_into_track_document(
-    track_document: Mapping[str, Any],
-    lastfm_entry: Optional[Mapping[str, Any]],
-) -> Dict[str, Any]:
-    """
-    Merge Last.fm genre and tag data into a track document.
-
-    This function enriches a track document with genre and tag information from
-    Last.fm mappings. It adds seed genres and tags to the document while preserving
-    existing data and tracking provenance.
-
-    Merging behavior:
-    - Adds Last.fm seed genre to genres list if not already present
-    - Adds Last.fm tags to tags list if not already present
-    - Preserves existing genres and tags
-    - Records provenance information about data sources
-
-    Args:
-        track_document (Mapping[str, Any]): Base track document to enrich.
-        lastfm_entry (Optional[Mapping[str, Any]]): Last.fm data with 'seed_genre',
-            'tags', and 'tag_strengths'. If None, returns track_document unchanged.
-
-    Returns:
-        Dict[str, Any]: Enriched track document with merged Last.fm data.
-    """
-    td = dict(track_document or {})
-    td.setdefault("genres", [])
-    td.setdefault("tags", [])
-    td.setdefault("provenance", {})
-
-    if not lastfm_entry:
-        return td
-
-    genres = _unique_tokens(td.get("genres", []))
-    tags = _unique_tokens(td.get("tags", []))
-    seed_genre = _clean_token(lastfm_entry.get("seed_genre"))
-    if seed_genre and seed_genre not in genres:
-        genres.append(seed_genre)
-    for tag in _unique_tokens(lastfm_entry.get("tags", [])):
-        if tag not in tags:
-            tags.append(tag)
-
-    td["genres"] = genres
-    td["tags"] = tags
-    td["provenance"] = dict(td.get("provenance") or {})
-    td["provenance"]["genre_source"] = "msd_lastfm_map"
-    if lastfm_entry.get("tags"):
-        td["provenance"]["tag_source"] = "msd_lastfm_map"
-    if lastfm_entry.get("tag_strengths"):
-        td["provenance"]["lastfm_tag_strengths"] = dict(lastfm_entry["tag_strengths"])
-    return td
-
-
-def load_mxm_vocab(path: str) -> Dict[int, str]:
-    """
-    Load the musiXmatch (MXM) vocabulary from a dataset file.
-
-    The MXM vocabulary is stored in a header line starting with '%' followed by
-    comma-separated words. Word IDs are 1-based indices into this list.
-
-    Args:
-        path (str): Path to MXM dataset file containing the vocabulary header.
-
-    Returns:
-        Dict[int, str]: Mapping of word_id (1-based) to word string.
-
-    Raises:
-        ValueError: If no vocabulary header line (%) is found in the file.
-    """
-    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line:
-                continue
-            if line.startswith("%"):
-                words = line[1:].split(",")
-                return {i + 1: w for i, w in enumerate(words)}
-    raise ValueError(f"Could not find MXM vocab header line (%) in: {path}")
-
-
-def iter_mxm_bow_rows(path: str):
-    """
-    Iterate over bag-of-words rows from an MXM dataset file.
-
-    Parses each data line into a dictionary containing track ID, MXM track ID,
-    and bag-of-words vector. Skips header lines and comments.
-
-    Each row format: track_id,mxm_tid,word_id:count,word_id:count,...
-
-    Args:
-        path (str): Path to MXM dataset file.
-
-    Yields:
-        Dict[str, Any]: Row dictionaries with keys:
-            - 'track_id': MSD track ID (string)
-            - 'mxm_tid': musiXmatch track ID (string)
-            - 'bow_vector': Dict[int, int] of word_id -> count
-    """
-    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line or line.startswith("#") or line.startswith("%"):
-                continue
-
-            parts = line.split(",")
-            if len(parts) < 2:
-                continue
-
-            track_id = parts[0].strip()
-            mxm_tid = parts[1].strip()
-            bow_vector: Dict[int, int] = {}
-
-            for pair in parts[2:]:
-                if ":" not in pair:
-                    continue
-                wid_s, count_s = pair.split(":", 1)
-                try:
-                    wid = int(wid_s)
-                    count = int(count_s)
-                except (TypeError, ValueError):
-                    continue
-                if count > 0:
-                    bow_vector[wid] = count
-
-            yield {
-                "track_id": track_id,
-                "mxm_tid": mxm_tid,
-                "bow_vector": bow_vector,
-            }
-
-
-def track_id_to_msd_h5_path(track_id: str, msd_root: str) -> Path:
-    """
-    Resolve an MSD track ID to its expected HDF5 path inside MillionSongSubset.
-
-    MSD subset files are stored as:
-    <root>/<track_id[2]>/<track_id[3]>/<track_id[4]>/<track_id>.h5
-    """
-    clean_track_id = _clean_text(track_id)
-    if len(clean_track_id) < 5:
-        raise ValueError(f"Invalid MSD track_id: {track_id!r}")
-    return Path(msd_root) / clean_track_id[2] / clean_track_id[3] / clean_track_id[4] / f"{clean_track_id}.h5"
 
 
 class EmbeddingManager:
@@ -483,131 +146,6 @@ class EmbeddingManager:
     # TrackDocument helpers
     # --------------------------
 
-    def bow_to_text(
-        self,
-        bow_vector: Optional[Mapping[Any, Any]],
-        vocab: Optional[Mapping[Any, str]],
-        max_tokens: int = 256,
-        per_word_cap: int = 5,
-    ) -> str:
-        """
-        Convert a bag-of-words (BoW) vector into a compact text representation.
-
-        This method transforms MXM (musiXmatch) bag-of-words data into pseudo-text
-        that can be embedded. It handles word frequency capping to prevent dominant
-        words from overwhelming the embedding, and limits total tokens for efficiency.
-
-        The conversion process:
-        1. Sorts word IDs for deterministic output
-        2. Maps word IDs to vocabulary terms (or uses 'unk_{id}' for unknowns)
-        3. Repeats words based on their frequency (capped at per_word_cap)
-        4. Joins tokens with spaces, limited to max_tokens total
-
-        Args:
-            bow_vector (Optional[Mapping[Any, Any]]): Dictionary mapping word IDs to counts.
-                Can be None or empty, in which case an empty string is returned.
-            vocab (Optional[Mapping[Any, str]]): Vocabulary mapping word IDs to words.
-                If None, uses 'unk_{id}' format for all words.
-            max_tokens (int): Maximum number of tokens in the output text. Default 256.
-            per_word_cap (int): Maximum times a single word can be repeated. Default 5.
-                This prevents frequent words from dominating the embedding.
-
-        Returns:
-            str: Space-separated text representation of the bag-of-words data.
-
-        Example:
-            bow = {1: 10, 2: 3, 3: 1}
-            vocab = {1: "love", 2: "heart", 3: "song"}
-            result = manager.bow_to_text(bow, vocab, max_tokens=10, per_word_cap=3)
-            # Result: "love love love heart heart heart song"
-        """
-        if not bow_vector:
-            return ""
-
-        vocab = vocab or {}
-        pieces: List[str] = []
-
-        # Sort word ids to keep output deterministic.
-        for raw_wid, raw_count in sorted(bow_vector.items(), key=lambda x: str(x[0])):
-            try:
-                wid = int(raw_wid)
-                count = int(raw_count)
-            except (TypeError, ValueError):
-                continue
-            if count <= 0:
-                continue
-
-            word = vocab.get(wid) or vocab.get(str(wid)) or f"unk_{wid}"
-            token = _clean_token(word) or f"unk_{wid}"
-
-            # Cap repeats so one frequent word does not dominate the embedding text.
-            repeat = min(count, max(1, per_word_cap))
-            pieces.extend([token] * repeat)
-            if len(pieces) >= max_tokens:
-                break
-
-        return " ".join(pieces[:max_tokens])
-
-    def build_track_embedding_text(
-        self,
-        track_document: Mapping[str, Any],
-        mxm_vocab: Optional[Mapping[Any, str]] = None,
-        include_bow: bool = True,
-        max_bow_tokens: int = 256,
-    ) -> str:
-        """
-        Build a deterministic text string from a track document for embedding generation.
-
-        This method constructs embedding text by combining genre information and
-        bag-of-words lyrics data. The current policy prioritizes Last.fm genre labels
-        and MXM bag-of-words data for semantic retrieval.
-
-        The text building process:
-        1. Checks for precomputed embedding text in track_document.retrieval_text.embedding_text
-        2. Adds genre tokens in "genre:{genre}" and plain "{genre}" formats
-        3. Optionally includes bag-of-words text converted via bow_to_text()
-        4. Joins all tokens with spaces and normalizes whitespace
-
-        Args:
-            track_document (Mapping[str, Any]): Track document dictionary containing
-                metadata, genres, and lyrics information.
-            mxm_vocab (Optional[Mapping[Any, str]]): MXM vocabulary for BoW conversion.
-                Required if include_bow is True and BoW data is present.
-            include_bow (bool): Whether to include bag-of-words lyrics in the text.
-                Default True.
-            max_bow_tokens (int): Maximum tokens from BoW conversion. Default 256.
-
-        Returns:
-            str: Normalized text string suitable for embedding generation.
-
-        Note:
-            If track_document.retrieval_text.embedding_text exists, it takes precedence
-            over dynamic text building, allowing for custom embedding strategies.
-        """
-        td = dict(track_document or {})
-        td.setdefault("lyrics", {})
-        td.setdefault("retrieval_text", {})
-
-        # Allow ingestion code to precompute a final embedding string.
-        precomputed = _clean_text((td["retrieval_text"] or {}).get("embedding_text"))
-        if precomputed:
-            return precomputed
-
-        tokens: List[str] = []
-
-        # Use only genre labels (primarily from Last.fm seed genre merge).
-        for genre in _unique_tokens(_to_list(td.get("genres"))):
-            tokens.append(f"genre:{genre}")
-            tokens.append(genre)
-
-        if include_bow:
-            lyrics = td.get("lyrics") or {}
-            bow_text = self.bow_to_text(lyrics.get("bow_vector"), mxm_vocab, max_tokens=max_bow_tokens)
-            if bow_text:
-                tokens.append(bow_text)
-
-        return re.sub(r"\s+", " ", " ".join(tokens)).strip()
-
     def track_metadata(self, track_document: Mapping[str, Any]) -> Dict[str, Any]:
         """
         Extract and format metadata from a track document for ChromaDB storage.
@@ -641,20 +179,20 @@ class EmbeddingManager:
 
         metadata: Dict[str, Any] = {}
 
-        track_id = _clean_text(td.get("track_id"))
+        track_id = clean_text(td.get("track_id"))
         if track_id:
             metadata["track_id"] = track_id
             metadata["song_id"] = track_id  # legacy compatibility
 
         for key in ["title", "artist_name"]:
-            value = _clean_text(td.get(key))
+            value = clean_text(td.get(key))
             if value:
                 metadata[key] = value
 
-        genres = _unique_tokens(_to_list(td.get("genres")))
+        genres = unique_tokens(to_list(td.get("genres")))
         if genres:
             metadata["genres_csv"] = "|".join(genres)
-        tags = _unique_tokens(_to_list(td.get("tags")))
+        tags = unique_tokens(to_list(td.get("tags")))
         if tags:
             metadata["tags_csv"] = "|".join(tags)
 
@@ -848,7 +386,7 @@ class EmbeddingManager:
         Raises:
             ValueError: If track_document.track_id is missing.
         """
-        track_id = _clean_text((track_document or {}).get("track_id"))
+        track_id = clean_text((track_document or {}).get("track_id"))
         if not track_id:
             raise ValueError("track_document.track_id is required")
 
@@ -1155,7 +693,7 @@ _embedding_manager: Optional[EmbeddingManager] = None
 
 def get_embedding_manager(persist_directory: Optional[str] = None, chroma_path: Optional[str] = None) -> EmbeddingManager:
     """
-    Get or create the global EmbeddingManager singleton instance.
+    Get or create the global EmbeddingManager single instance.
 
     This function maintains a single EmbeddingManager instance for the module,
     creating it on first access. Subsequent calls return the same instance.
