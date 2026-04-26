@@ -31,9 +31,11 @@ using one consistent object shape across the retrieval pipeline.
   "language": "string | null",
   "era": "string | null",
   "genres": [],
+  "genre_scores": {},
   "moods": [],
   "themes": [],
   "tags": [],
+  "tag_scores": {},
   "audio_features": {},
   "lyrics": {},
   "retrieval_text": {},
@@ -58,9 +60,11 @@ using one consistent object shape across the retrieval pipeline.
 - `language`
 - `era`
 - `genres`
+- `genre_scores`
 - `moods`
 - `themes`
 - `tags`
+- `tag_scores`
 - `audio_features`
 - `lyrics`
 - `retrieval_text`
@@ -101,6 +105,12 @@ All tag-like lists should be normalized, lowercase, and deduplicated.
 - `genres: string[]`
   - Genre labels (from local metadata, Last.fm mapping, or curated sources).
 
+- `genre_scores: object`
+  - Optional normalized map of genre label to numeric weight.
+  - Example: `{ "rock": 100.0, "post_hardcore": 82.5 }`
+  - Keys should be lowercase normalized labels.
+  - Values should be source-preserving weights when available, not invented defaults.
+
 - `moods: string[]`
   - Mood-like labels (e.g., `nostalgic`, `melancholic`, `uplifting`).
 
@@ -110,6 +120,12 @@ All tag-like lists should be normalized, lowercase, and deduplicated.
 - `tags: string[]`
   - Generic normalized tags not captured elsewhere.
   - Useful as a catch-all for `msd_lastfm_map` labels.
+
+- `tag_scores: object`
+  - Optional normalized map of tag label to numeric weight.
+  - Example: `{ "night_drive": 78.0, "melodic": 64.0 }`
+  - Keys should be lowercase normalized labels.
+  - Values should be source-preserving weights when available.
 
 ## `audio_features` Object (Optional)
 
@@ -170,13 +186,16 @@ Suggested keys:
 
 ```json
 {
-  "semantic_text": "nostalgic night drive synth pop medium energy",
-  "embedding_text": "title midnight drive artist example artist genres synthpop moods nostalgic night_drive tags neon city rain"
+  "semantic_text": "late night city drive lyrics vibe",
+  "embedding_text": "love city rain drive tonight"
 }
 ```
 
 Rules:
 - `embedding_text` should be deterministic and reproducible from the document.
+- In v1, `embedding_text` should be derived from BoW text only.
+- Genre, tag, and other relational metadata may exist on the document, but they are
+  not vectorized in v1.
 - Exclude empty fields.
 - Keep it compact; do not dump raw JSON.
 
@@ -248,30 +267,34 @@ This spec is compatible with the current multi-table schema in
 - `AudioFeature.*` -> `audio_features.*`
 - `Lyric.bow_vector` -> `lyrics.bow_vector`
 - `Lyric.full_text` -> `lyrics.full_text`
+- `Track.seed_genre` -> `genres`
+- `Track.top_tags_json` -> `genre_scores` / `tag_scores` after normalization
 - `Tag.tag_value` (by type) -> `genres` / `moods` / `tags`
 - `Song.spotify_url`, `Song.preview_url` -> `playback.*`
 - `Song.spotify_id` -> `source_ids.spotify_id`
 
 ## Embeddings Guidance (For `embeddings.py`)
 
-`embeddings.py` should embed a `TrackDocument`-derived text representation, not
-just lyrics.
+`embeddings.py` should embed a `TrackDocument`-derived text representation, but
+for v1 the only vectorized field is BoW-derived text.
 
 Recommended embedding inputs (in priority order):
 
 1. `retrieval_text.embedding_text` (if precomputed)
-2. Deterministic composition from:
-   - `title`
-   - `artist_name`
-   - `album_title`
-   - `genres`
-   - `moods`
-   - `themes`
-   - `tags` (including `msd_lastfm_map` labels)
-   - selected audio buckets (e.g., `energy`, tempo bucket)
-   - BOW-derived text (from `lyrics.bow_vector`) when available
+2. Deterministic BoW text built from `lyrics.bow_vector`
 
-This keeps semantic retrieval useful even when full lyrics text is absent.
+Non-vectorized v1 fields:
+- `genres`
+- `genre_scores`
+- `tags`
+- `tag_scores`
+- `audio_features`
+- `title`
+- `artist_name`
+- `album_title`
+
+Those fields still matter for relational filtering, hydration, and ranking, but
+they should not change the vector representation in v1.
 
 ## Example `TrackDocument`
 
@@ -285,9 +308,18 @@ This keeps semantic retrieval useful even when full lyrics text is absent.
   "language": "en",
   "era": "2010s",
   "genres": ["synthpop", "indie_pop"],
+  "genre_scores": {
+    "synthpop": 92.0,
+    "indie_pop": 71.0
+  },
   "moods": ["nostalgic", "dreamy"],
   "themes": ["night_drive", "city_rain"],
   "tags": ["neon", "late_night", "melodic"],
+  "tag_scores": {
+    "neon": 63.0,
+    "late_night": 55.0,
+    "melodic": 48.0
+  },
   "audio_features": {
     "tempo": 102.4,
     "energy": 0.58,
@@ -303,7 +335,7 @@ This keeps semantic retrieval useful even when full lyrics text is absent.
     "vocab_size": 5000
   },
   "retrieval_text": {
-    "embedding_text": "midnight drive example artist synthpop indie_pop nostalgic dreamy night_drive city_rain neon late_night melodic medium energy"
+    "embedding_text": "love rain city drive tonight"
   },
   "source_ids": {
     "msd_track_id": "TRABC123",
@@ -325,6 +357,7 @@ This keeps semantic retrieval useful even when full lyrics text is absent.
 ## Success Criteria
 
 - A single `TrackDocument` can be produced from current DB rows without schema changes.
-- `embeddings.py` can generate embeddings with or without lyrics text.
+- `embeddings.py` can generate v1 embeddings from BoW-derived text when lyrics are present.
+- Genre and tag score maps can be preserved on the document without affecting v1 vectorization.
 - `TrackDocument` remains valid when only partial metadata is available.
 - API responses can reuse the same shape with optional field omission.
