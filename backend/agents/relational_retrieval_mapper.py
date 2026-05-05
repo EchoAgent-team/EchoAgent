@@ -8,9 +8,7 @@ This module is the bridge between:
 """
 
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional, Tuple
-
 from .vibe_intent import VibeIntent
 
 

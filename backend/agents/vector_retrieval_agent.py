@@ -13,11 +13,8 @@ It is designed to be flexible in terms of where it can be called from:
 """
 
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional
-
 from backend.data.embeddings import get_embedding_manager, get_vector_store
-
 from .vibe_intent import VibeIntent
 
 
