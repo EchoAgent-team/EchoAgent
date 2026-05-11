@@ -1,0 +1,52 @@
+EchoAgent/
+├── .git/
+├── .gitignore
+├── README.md
+├── environment.yml
+│
+├── backend/
+│   ├── agents/
+│   │   ├── __pycache__/
+│   │   ├── prompt_parser.py
+│   │   ├── prompt_schema.json
+│   │   ├── relational_retrieval_agent.py
+│   │   ├── relational_retrieval_mapper.py
+│   │   ├── vector_retrieval_agent.py
+│   │   └── vibe_intent.py
+│   │
+│   ├── data/
+│   │   ├── __pycache__/
+│   │   ├── db.py
+│   │   ├── echoagent.db
+│   │   ├── embeddings.py
+│   │   ├── ingest_relational_DB.py
+│   │   ├── mxm_dataset_to_db.py
+│   │   ├── retrieval_text.py
+│   │   ├── text_utils.py
+│   │   ├── tools.py
+│   │   ├── vector_indexing.py
+│
+├── database/
+│   ├── chroma_db/
+│   │   ├── chroma.sqlite3
+│   │   └── 094a5e71-cc54-4648-9d5f-631938923ba0/
+│   └── music_relational.db
+│
+├── docs/
+│   ├── roadmap.md
+│   └── specs/
+│       ├── 01_prompt_decomposition_spec.md
+│       ├── 02_prompt_taxonomy.md
+│       ├── track_document.md
+│       └── vibe_intent.md
+│
+├── notebooks/
+│   ├── data_explorations.ipynb
+│   └── relational_DB_ingestion_runner.ipynb
+│
+└── tests/
+    ├── __init__.py
+    ├── __pycache__/
+    ├── test_api.py
+    ├── test_embeddings.py
+    └── test_vector_retrieval_agent.py
