@@ -1,23 +1,25 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
 from backend.agents.vibe_intent import VibeIntent
+from backend.agents.planner_agent import PlaylistPlan  # canonical dataclass definition
+
+if TYPE_CHECKING:
+    from backend.agents.prompt_parser import PromptParser
+    from backend.agents.planner_agent import PlannerAgent
 
 
-class PlaylistPlan(TypedDict, total=False):
-    """Planner output that controls retrieval, ranking, and playlist shape."""
-
-    playlist_size: int
-    n_vector: int
-    n_relational: int
-
-    semantic_weight: float
-    relational_weight: float
-    soft_preference_weight: float
-    novelty_weight: float
-
-    artist_repeat_penalty: float
-    genre_concentration_penalty: float
-    exclusion_penalty: float
+# class PlaylistPlan(TypedDict, total=False):
+#     """Superseded by the PlaylistPlan dataclass in planner_agent.py."""
+#     playlist_size: int
+#     n_vector: int
+#     n_relational: int
+#     semantic_weight: float
+#     relational_weight: float
+#     soft_preference_weight: float
+#     novelty_weight: float
+#     artist_repeat_penalty: float
+#     genre_concentration_penalty: float
+#     exclusion_penalty: float
 
 
 class CriticReport(TypedDict, total=False):
@@ -32,6 +34,8 @@ class PlaylistGraphState(TypedDict, total=False):
     """Shared state passed between LangGraph nodes."""
 
     user_prompt: str
+    prompt_parser: "PromptParser"
+    planner_agent: "PlannerAgent"
 
     intent: VibeIntent
     playlist_plan: PlaylistPlan
