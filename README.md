@@ -178,6 +178,11 @@ This structure reflects the current emphasis of the repository: prompt understan
 - Expose the graph through an API and interactive demo. 
 - Expand test coverage around prompt parsing, retrieval correctness, and playlist behavior.
 
+## Future directions
+Phase 2:
+- Live list of tracks which the user can send to their audio service of choice (Spotify, Apple Music, etc.)
+- User feedback loop for refining playlist results over time.
+
 ## Notes
 
 The public README focuses on architecture, current progress, and next steps. The current state of the project is best described as a partially implemented hybrid retrieval system with a clear path toward LangGraph-based orchestration and playlist generation. 
