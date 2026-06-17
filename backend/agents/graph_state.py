@@ -6,6 +6,7 @@ from backend.agents.planner_agent import PlaylistPlan  # canonical dataclass def
 if TYPE_CHECKING:
     from backend.agents.prompt_parser import PromptParser
     from backend.agents.planner_agent import PlannerAgent
+    from backend.agents.playlist_builder import PlaylistBuilderAgent
 
 
 # class PlaylistPlan(TypedDict, total=False):
@@ -36,6 +37,7 @@ class PlaylistGraphState(TypedDict, total=False):
     user_prompt: str
     prompt_parser: "PromptParser"
     planner_agent: "PlannerAgent"
+    playlist_builder_agent: "PlaylistBuilderAgent"
 
     intent: VibeIntent
     playlist_plan: PlaylistPlan

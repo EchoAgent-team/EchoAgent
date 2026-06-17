@@ -11,9 +11,8 @@ Graph shape:
                                                          plan          END
                                                       (retry, capped)
 
-Agents (LLM-driven):  parse_intent, plan, critique
-Deterministic nodes:  retrieve_relational, retrieve_vector, fuse_candidates,
-                      rerank, build_playlist
+Agents (LLM-driven):  parse_intent, plan, build_playlist, critique
+Deterministic nodes:  retrieve_relational, retrieve_vector, fuse_candidates, rerank
 """
 
 from __future__ import annotations
@@ -28,8 +27,8 @@ from backend.agents.prompt_parser import PromptParser
 from backend.agents.planner_agent import PlannerAgent
 from backend.agents.relational_retrieval_agent import relational_retrieval_node
 from backend.agents.vector_retrieval_agent import vector_retrieval_node
-from backend.agents.reranker import rerank_node          # stub — not yet implemented
-from backend.agents.playlist_builder import build_playlist_node  # stub — not yet implemented
+from backend.agents.reranker import reranker_node
+from backend.agents.playlist_builder import build_playlist_node, PlaylistBuilderAgent
 from backend.agents.critic_agent import critique_node    # stub — not yet implemented
 
 
@@ -126,7 +125,7 @@ def build_playlist_graph() -> StateGraph:
     graph.add_node("retrieve_relational", retrieve_relational_node)
     graph.add_node("retrieve_vector", retrieve_vector_node)
     graph.add_node("fuse_candidates", candidate_fusion_node)
-    graph.add_node("rerank", rerank_node)
+    graph.add_node("rerank", reranker_node)
     graph.add_node("build_playlist", build_playlist_node)
     graph.add_node("critique", critique_node)
 
@@ -166,6 +165,7 @@ def run_playlist_graph(
     user_prompt: str,
     prompt_parser: PromptParser,
     planner_agent: PlannerAgent,
+    playlist_builder_agent: PlaylistBuilderAgent,
     database_url: str | None = None,
     chroma_persist_directory: str | None = None,
     max_retries: int = 2,
@@ -174,12 +174,13 @@ def run_playlist_graph(
     Run the full playlist graph for a single user prompt.
 
     Args:
-        user_prompt:              Raw natural-language request.
-        prompt_parser:            Initialised PromptParser instance.
-        planner_agent:            Initialised PlannerAgent instance.
-        database_url:             Optional SQLAlchemy DB URL override.
-        chroma_persist_directory: Optional Chroma persistence path override.
-        max_retries:              Maximum critic retry loops (default 2).
+        user_prompt:               Raw natural-language request.
+        prompt_parser:             Initialised PromptParser instance.
+        planner_agent:             Initialised PlannerAgent instance.
+        playlist_builder_agent:    Initialised PlaylistBuilderAgent instance.
+        database_url:              Optional SQLAlchemy DB URL override.
+        chroma_persist_directory:  Optional Chroma persistence path override.
+        max_retries:               Maximum critic retry loops (default 2).
 
     Returns:
         Final PlaylistGraphState with state.playlist populated.
@@ -190,6 +191,7 @@ def run_playlist_graph(
         "user_prompt": user_prompt,
         "prompt_parser": prompt_parser,
         "planner_agent": planner_agent,
+        "playlist_builder_agent": playlist_builder_agent,
         "database_url": database_url,
         "chroma_persist_directory": chroma_persist_directory,
         "retry_count": 0,
