@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json, re
 from typing import Optional
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from .vibe_intent import VibeIntent
 
 class PromptParser:
@@ -174,14 +172,10 @@ class PromptParser:
         return intent
 
 class LLMClient:
-    def __init__(self, model_name, 
-                device, api_key, 
-                endpoint, temperature, 
-                max_new_tokens):
-        """
-        Store model name, API keys, endpoints, temperature, etc.
-        No network calls here.
-        """
+    def __init__(self, model_name,
+                 device, api_key,
+                 endpoint, temperature,
+                 max_new_tokens):
         self.model_name = model_name
         self.device = device
         self.api_key = api_key
@@ -189,36 +183,48 @@ class LLMClient:
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
 
-        self._tokens = AutoTokenizer.from_pretrained(self.model_name, use_fast=True)
-        self._model = AutoModelForCausalLM.from_pretrained(self.model_name, 
-                                                        torch_dtype=torch.float16 if self.device == "cuda" else None,
-                                                        device_map="auto" if self.device == "cuda" else None,)
-        
+        if api_key is not None:
+            from huggingface_hub import InferenceClient
+            self._api_client = InferenceClient(api_key=api_key)
+            self._mode = "hf_api"
+        else:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            self._torch = torch
+            self._tokens = AutoTokenizer.from_pretrained(self.model_name, use_fast=True)
+            self._model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.float16 if self.device == "cuda" else None,
+                device_map="auto" if self.device == "cuda" else None,
+            )
+            self._mode = "local"
 
     def generate(self, system_prompt, user_input):
-        """
-        Args:
-            - system_prompt: the instruction built from schema
-            - user_prompt: the user's natural language input
+        if self._mode == "hf_api":
+            response = self._api_client.chat_completion(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_input},
+                ],
+                temperature=self.temperature,
+                max_tokens=self.max_new_tokens,
+            )
+            return response.choices[0].message.content
 
-        Returns:
-            - raw text output from the LLM (string)
-        """
-        
+        # local HF inference
+        torch = self._torch
         text = ("SYSTEM:\n" + system_prompt.strip() + "\n\n"
                 "USER:\n" + user_input.strip() + "\n\n"
                 "ASSISTANT:\n")
-        
         inputs = self._tokens(text, return_tensors="pt").to(self._model.device)
-        
         with torch.no_grad():
             output = self._model.generate(
-                                        **inputs,
-                                        max_new_tokens=self.max_new_tokens,
-                                        do_sample=(self.temperature > 0.0),
-                                        temperature=max(self.temperature, 1e-6),
-                                        )
-            
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=(self.temperature > 0.0),
+                temperature=max(self.temperature, 1e-6),
+            )
         decoded_text = self._tokens.decode(output[0], skip_special_tokens=True)
         marker = "ASSISTANT:"
         return decoded_text.split(marker, 1)[-1].strip() if marker in decoded_text else decoded_text.strip()
