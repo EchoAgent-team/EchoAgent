@@ -1,38 +1,57 @@
 EchoAgent/
-├── .git/
+├── .claude/
+│   ├── CLAUDE.md
+│   └── skills/
+│
 ├── .gitignore
 ├── README.md
+├── dir_tree.txt
 ├── environment.yml
+├── langchain_tester.ipynb
 │
 ├── backend/
 │   ├── agents/
-│   │   ├── __pycache__/
+│   │   ├── candidate_fuser.py
+│   │   ├── critic_agent.py           # stub — LLM critique not yet implemented
+│   │   ├── graph_state.py
+│   │   ├── planner_agent.py
+│   │   ├── playlist_builder.py
+│   │   ├── playlist_graph.py
 │   │   ├── prompt_parser.py
 │   │   ├── prompt_schema.json
 │   │   ├── relational_retrieval_agent.py
 │   │   ├── relational_retrieval_mapper.py
+│   │   ├── reranker.py
 │   │   ├── vector_retrieval_agent.py
 │   │   └── vibe_intent.py
 │   │
+│   ├── api/
+│   │   ├── main.py
+│   │   ├── schemas.py
+│   │   └── routes/
+│   │       ├── health.py
+│   │       └── recommend.py
+│   │
 │   ├── data/
-│   │   ├── __pycache__/
 │   │   ├── db.py
-│   │   ├── echoagent.db
 │   │   ├── embeddings.py
 │   │   ├── ingest_relational_DB.py
 │   │   ├── mxm_dataset_to_db.py
 │   │   ├── retrieval_text.py
 │   │   ├── text_utils.py
 │   │   ├── tools.py
-│   │   ├── vector_indexing.py
+│   │   └── vector_indexing.py
+│   │
+│   └── utils/
+│       └── log.py
 │
 ├── database/
 │   ├── chroma_db/
-│   │   ├── chroma.sqlite3
-│   │   └── 094a5e71-cc54-4648-9d5f-631938923ba0/
 │   └── music_relational.db
 │
 ├── docs/
+│   ├── architecture.md
+│   ├── future.md
 │   ├── roadmap.md
 │   └── specs/
 │       ├── 01_prompt_decomposition_spec.md
@@ -41,12 +60,18 @@ EchoAgent/
 │       └── vibe_intent.md
 │
 ├── notebooks/
+│   ├── EDA.ipynb
 │   ├── data_explorations.ipynb
+│   ├── pipeline_tests.ipynb
+│   ├── prompt_tests.ipynb
+│   ├── prototype_similarity.ipynb
 │   └── relational_DB_ingestion_runner.ipynb
 │
 └── tests/
     ├── __init__.py
-    ├── __pycache__/
     ├── test_api.py
+    ├── test_candidate_fuser.py
     ├── test_embeddings.py
+    ├── test_planner_agent.py
+    ├── test_reranker.py
     └── test_vector_retrieval_agent.py

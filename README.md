@@ -100,9 +100,9 @@ A central design decision in this project is to be selective about where agentic
 
 The planned orchestration direction is therefore not "everything is an agent," but rather a mixed system of LLM-driven and deterministic nodes connected through LangGraph. That allows the project to showcase agentic workflow design without sacrificing traceability or engineering rigor. [
 
-## 📈 Planned LangGraph workflow
+## 📈 LangGraph workflow
 
-The next implementation phase is centered on a LangGraph orchestration layer. The intended workflow is:
+The orchestration layer is implemented in `backend/agents/playlist_graph.py`. The workflow is:
 
 ```mermaid
 flowchart TD
@@ -117,43 +117,50 @@ flowchart TD
     H --> I[playlist output]
 ```
 
-This graph reflects the current project direction: one stateful workflow that combines parsed intent, deterministic retrieval, semantic retrieval, candidate fusion, and playlist assembly. The existing codebase already provides strong building blocks for the intent, mapper, and vector retrieval nodes.
+This graph reflects the implemented workflow: one stateful LangGraph pipeline combining parsed intent, deterministic retrieval, semantic retrieval, candidate fusion, scoring, and playlist assembly. The critic routes back to the planner on rejection, capped at `max_retries`.
 
 ## ✅ Project status
 
-What is implemented now:
+What is implemented:
 
-- Schema-driven prompt parsing into structured intent objects. 
-- Typed `VibeIntent` contract with normalization and validation. 
-- Relational database models and query helpers.
-- Deterministic mapping from intent constraints to relational filters.
+- Schema-driven prompt parsing into structured intent objects.
+- Typed `VibeIntent` contract with normalization and validation.
+- `PlannerAgent` producing a structured `PlaylistPlan` with scoring weights and retrieval limits.
+- Relational database models, query helpers, and deterministic intent-to-filter mapping.
 - Chroma-backed embedding management and semantic retrieval utilities.
-- A vector retrieval wrapper designed to be usable directly or as a LangGraph node. 
-- Repository structure with docs, notebooks, and tests already in place.
+- `CandidateFuser` merging relational and vector candidates by track ID.
+- Deterministic `Reranker` executing planner-supplied weights with per-candidate score components.
+- `PlaylistBuilderAgent` with artist-repeat and genre-concentration controls.
+- Full LangGraph orchestration graph with parallel retrieval, critic routing, and retry loop.
+- Shared `PlaylistGraphState` schema across all nodes.
 
 What is actively being built next:
 
-- LangGraph state schema and node interfaces. 
-- Relational retrieval node integration alongside the existing vector node direction. 
-- Hybrid candidate fusion and ranking logic. 
-- Playlist assembly logic with relevance and diversity tradeoffs. 
-- API and interactive app layer for public use and demos.
+- End-to-end graph testing and integration bug fixes.
+- `CriticAgent` with LLM-backed structured review (currently a stub that always accepts).
+- API route wiring to connect the graph to the FastAPI endpoints.
 
 ## 📁 Repository structure
 
 ```
 EchoAgent/
 ├── backend/                    # Core application backend
-│   ├── agents/                 # AI agents for processing
+│   ├── agents/                 # LangGraph nodes and agents
 │   ├── api/                    # FastAPI application
 │   │   └── routes/             # API route handlers
 │   ├── data/                   # Data management and ingestion
 │   └── utils/                  # Utility modules
 │
-├── docs/                       # Documentation
-│   └── specs/                  # Detailed specifications
+├── database/                   # Persisted data stores
+│   └── chroma_db/              # ChromaDB vector store
 │
-├── notebooks/                  # Jupyter notebooks for exploration
+├── docs/                       # Documentation
+│   ├── architecture.md         # Design decisions and rationale
+│   ├── future.md               # Deferred and Phase 2 ideas
+│   ├── roadmap.md              # Current status and next priorities
+│   └── specs/                  # Detailed interface specifications
+│
+├── notebooks/                  # Jupyter notebooks for exploration and testing
 │
 └── tests/                      # Test suite
 ```
@@ -171,12 +178,10 @@ This structure reflects the current emphasis of the repository: prompt understan
 
 ## 🛣️ Near-term roadmap
 
-- Build the LangGraph state object and first workflow graph. 
-- Add a relational retrieval node that plugs into the same graph state as vector retrieval. 
-- Implement hybrid fusion and ranking over relational and vector candidates. 
-- Add playlist construction logic with basic diversity controls.
-- Expose the graph through an API and interactive demo. 
-- Expand test coverage around prompt parsing, retrieval correctness, and playlist behavior.
+- Test the full LangGraph pipeline end-to-end and resolve integration bugs.
+- Implement `CriticAgent` with LLM-backed structured review and retry logic.
+- Wire FastAPI routes to the assembled graph for an initial API endpoint.
+- Expand test coverage: graph integration tests, API contract tests, critic behavior.
 
 ## Future directions
 Phase 2:
