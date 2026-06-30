@@ -1,12 +1,7 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 from backend.agents.vibe_intent import VibeIntent
 from backend.agents.planner_agent import PlaylistPlan  # canonical dataclass definition
-
-if TYPE_CHECKING:
-    from backend.agents.prompt_parser import PromptParser
-    from backend.agents.planner_agent import PlannerAgent
-    from backend.agents.playlist_builder import PlaylistBuilderAgent
 
 
 # class PlaylistPlan(TypedDict, total=False):
@@ -35,9 +30,9 @@ class PlaylistGraphState(TypedDict, total=False):
     """Shared state passed between LangGraph nodes."""
 
     user_prompt: str
-    prompt_parser: "PromptParser"
-    planner_agent: "PlannerAgent"
-    playlist_builder_agent: "PlaylistBuilderAgent"
+    prompt_parser: Any
+    planner_agent: Any
+    playlist_builder_agent: Any
 
     intent: VibeIntent
     playlist_plan: PlaylistPlan

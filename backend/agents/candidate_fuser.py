@@ -80,10 +80,11 @@ def fuse_candidates(
 
 
 def candidate_fusion_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    playlist_plan = state.get("playlist_plan", {})
+    raw_plan = state.get("playlist_plan")
+    plan_dict = raw_plan.to_dict() if raw_plan is not None else {}
 
-    relational_weight = playlist_plan.get("relational_weight", RELATIONAL_WEIGHT)
-    vector_weight = playlist_plan.get("semantic_weight", VECTOR_WEIGHT)
+    relational_weight = plan_dict.get("relational_weight", RELATIONAL_WEIGHT)
+    vector_weight = plan_dict.get("semantic_weight", VECTOR_WEIGHT)
 
     fused_candidates = fuse_candidates(
         relational_candidates=state.get("relational_candidates", []),

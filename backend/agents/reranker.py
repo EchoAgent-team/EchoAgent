@@ -247,10 +247,11 @@ def rerank_candidates(
 
 
 def reranker_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    raw_plan = state.get("playlist_plan")
     ranked_candidates = rerank_candidates(
         candidates=state.get("fused_candidates", []),
         intent=state["intent"],
-        playlist_plan=state.get("playlist_plan", {}),
+        playlist_plan=raw_plan.to_dict() if raw_plan is not None else {},
     )
 
     return {

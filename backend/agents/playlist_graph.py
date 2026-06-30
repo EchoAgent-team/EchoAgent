@@ -39,7 +39,7 @@ from backend.agents.critic_agent import critique_node    # stub — not yet impl
 def parse_intent_node(state: PlaylistGraphState) -> Dict[str, Any]:
     """Convert raw user_prompt into a VibeIntent via PromptParser."""
     parser: PromptParser = state["prompt_parser"]
-    intent = parser.parse(state["user_prompt"])
+    intent = parser.parse()
     return {"intent": intent}
 
 
