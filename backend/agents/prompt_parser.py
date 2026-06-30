@@ -21,11 +21,11 @@ class PromptParser:
         self.max_retries = max_retries
         self.required_fields = {"semantic_query", "hard_constraints", "soft_preferences", "exclusions"}
 
-        
+
         with open(self.prompt_schema_path, 'r') as file:
             prompt_schema = json.load(file)
-            
-        
+
+
         for my_keys in ["_definitions", "_output_rules", "_template"]:
             if my_keys not in prompt_schema:
                 raise ValueError(f"Missing key '{my_keys}' in prompt schema.")

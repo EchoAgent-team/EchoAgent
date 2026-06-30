@@ -30,6 +30,52 @@ The current relational store uses SQLite. The SQLAlchemy models are written to b
 
 An interactive front-end (e.g. a simple web app or Gradio demo) to let users type prompts and see generated playlists. Planned for after the API layer is stable.
 
+## End-to-End Playback: Prompt → Hear Music
+
+Full user-facing flow: user types a prompt in a browser, EchoAgent builds a playlist, and music plays — all in one session.
+
+**Architecture:**
+
+```
+Browser (prompt input + Spotify iframe player)
+    │ POST /generate
+    ▼
+FastAPI backend
+    ├── /generate  →  LangGraph pipeline (existing playlist_graph.py)
+    │                     ↓ playlist (title + artist metadata)
+    └── /spotify   →  Spotify module (new)
+                          1. Search each track by title + artist → Spotify URI
+                          2. Create playlist in user's Spotify account
+                          3. Return playlist URL/URI to frontend
+                               ↓
+                     Embedded Spotify iframe player in browser
+```
+
+**Layers to build:**
+
+| Module | Purpose |
+|--------|---------|
+| `backend/spotify/resolver.py` | Search Spotify API for title+artist → Spotify URI |
+| `backend/spotify/player.py` | Create playlist in user account, optionally start playback |
+| `backend/api/main.py` | FastAPI endpoints: `POST /generate`, `POST /spotify/create` |
+| `frontend/index.html` | Single-page UI: prompt input + embedded Spotify iframe player |
+
+**Playback behavior by tier:**
+- Spotify Free: playlist created in account; iframe shows 30-second previews
+- Spotify Premium: full songs play in iframe or on any active Spotify device
+
+**Suggested build order:**
+1. `play.py` — single CLI script: run pipeline → resolve tracks → open Spotify playlist in browser
+2. FastAPI endpoints wrapping the same flow
+3. Minimal HTML frontend with embedded iframe player
+
+**Notes:**
+- Track resolution uses title + artist search (no ID mapping needed with current MSD data)
+- The `TrackDocument` schema already has a `playback.spotify_url` field ready for this
+- `backend/data/ingest_spotify.py` exists as a deferred module; Spotify is playback-only here, not a retrieval source
+- Requires a Spotify Developer app (`client_id` + `client_secret`) and OAuth for playlist creation
+- Full playback control (start/pause/skip from code) requires Spotify Premium
+
 ## Expanded Test Coverage
 
 - Graph integration tests (full `run_playlist_graph()` invocations with fixtures).
