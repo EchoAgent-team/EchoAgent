@@ -12,6 +12,26 @@ Example prompts:
 - "Warm, nostalgic indie for an autumn walk, low energy, no acoustic ballads."
 - "High-energy gym tracks with strong rhythm and minimal lyrical focus."
 
+## 🚀 Getting Started
+
+```bash
+# 1. Create and activate the conda environment
+conda env create -f environment.yml
+conda activate echoagent-env
+
+# 2. Configure environment variables
+cp .env.example .env
+# then fill in GROQ_API_KEY (required) — see .env.example for optional vars
+
+# 3. Start the backend API
+uvicorn backend.api.main:app --reload --port 8000
+
+# 4. Sanity check
+curl http://localhost:8000/health
+```
+
+There's no frontend yet. To exercise the full playlist pipeline directly, run `notebooks/pipeline_tests.ipynb` — it wires up a Groq-backed LLM client and calls `run_playlist_graph()` end to end.
+
 ## ⚙️ System Overview
 
 EchoAgent is currently shaped as a hybrid retrieval system with a typed intent layer in front of relational and vector search. The main flow is: parse the prompt, normalize it into a structured contract, retrieve candidate tracks from two complementary stores, then fuse and rank them into a playlist.
@@ -133,12 +153,14 @@ What is implemented:
 - `PlaylistBuilderAgent` with artist-repeat and genre-concentration controls.
 - Full LangGraph orchestration graph with parallel retrieval, critic routing, and retry loop.
 - Shared `PlaylistGraphState` schema across all nodes.
+- `CriticAgent` with LLM-backed structured review (accept/reason/suggested_adjustments) — implemented and verified standalone, but not yet wired into `run_playlist_graph()`.
+- FastAPI app with a working `GET /health` endpoint.
 
 What is actively being built next:
 
-- End-to-end graph testing and integration bug fixes.
-- `CriticAgent` with LLM-backed structured review (currently a stub that always accepts).
-- API route wiring to connect the graph to the FastAPI endpoints.
+- Wiring `CriticAgent` into `run_playlist_graph()` so critique actually runs as part of the graph.
+- `POST /recommend`, wrapping `run_playlist_graph()` behind the API.
+- A frontend.
 
 ## 📁 Repository structure
 
@@ -178,9 +200,9 @@ This structure reflects the current emphasis of the repository: prompt understan
 
 ## 🛣️ Near-term roadmap
 
-- Test the full LangGraph pipeline end-to-end and resolve integration bugs.
-- Implement `CriticAgent` with LLM-backed structured review and retry logic.
-- Wire FastAPI routes to the assembled graph for an initial API endpoint.
+- Wire `CriticAgent` into `run_playlist_graph()` so the retry loop actually runs.
+- Wrap `run_playlist_graph()` behind `POST /recommend`.
+- Build the frontend MVP.
 - Expand test coverage: graph integration tests, API contract tests, critic behavior.
 
 ## Future directions
