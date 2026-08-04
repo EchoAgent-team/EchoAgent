@@ -30,7 +30,7 @@ uvicorn backend.api.main:app --reload --port 8000
 curl http://localhost:8000/health
 ```
 
-There's no frontend yet. To exercise the full playlist pipeline directly, run `notebooks/pipeline_tests.ipynb` — it wires up a Groq-backed LLM client and calls `run_playlist_graph()` end to end.
+There's no frontend yet — the plan is a Streamlit app (`streamlit run frontend/app.py`, once built) that calls the backend over HTTP rather than calling `run_playlist_graph()` directly, so it exercises the same `/recommend` contract a future React frontend would use. Until then, run `notebooks/pipeline_tests.ipynb` to exercise the full playlist pipeline directly — it wires up a Groq-backed LLM client and calls `run_playlist_graph()` end to end.
 
 ## ⚙️ System Overview
 

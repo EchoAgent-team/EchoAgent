@@ -35,6 +35,7 @@ Living status doc. Updated as work progresses. For deferred / Phase 2 items see 
 - **`PromptParser.parse()` signature mismatch**: the implementation takes no arguments (uses `self.user_input` set at init), but `playlist_graph.py` calls `parser.parse(state["user_prompt"])` with an argument. Will surface as a `TypeError` during graph execution. Needs resolution before end-to-end testing.
 - **`environment.yml` is incomplete**: missing `langgraph`, `transformers`, `torch`, `fastapi`, `uvicorn`, `pytest`, and the Anthropic client library. Needs updating.
 - There appear to be two copies of the relational DB: `backend/data/music_relational.db` and `database/music_relational.db`. Should be consolidated.
+- **Vector-only candidates can be missing `title`/`artist_name`**: `EmbeddingManager.track_metadata()` in `backend/data/embeddings.py` only adds `title`/`artist_name` to Chroma metadata `if value:` — if either was empty at ingestion time, the key is omitted entirely rather than stored as `None`. A candidate found only via vector retrieval (not present in the relational store) can therefore reach the final playlist with no title or artist to display. Fix should happen before the playlist leaves the backend — e.g. backfill missing fields via a relational lookup by `track_id` for vector-only candidates — rather than pushing the gap onto the API/frontend layer. Also note: genre is keyed differently per source (relational: `seed_genre`, vector metadata: `genres_csv`, pipe-joined) — any fix here should reconcile that too.
 
 ---
 

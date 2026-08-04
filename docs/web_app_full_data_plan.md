@@ -9,9 +9,9 @@ Build a responsive web app / PWA first, not native Android or iOS.
 Recommended stack:
 
 - Backend: FastAPI + existing LangGraph pipeline
-- Frontend: Next.js or Vite React
-- UI: Tailwind CSS + shadcn/ui
-- Hosting: Vercel for frontend; Render, Fly.io, Railway, or a small VM for backend
+- Frontend (MVP): Streamlit, calling the FastAPI backend over HTTP (not calling `run_playlist_graph()` directly) — same client-agnostic `/recommend` contract a future React frontend would use. Fast to build given limited frontend experience, and defers the fully-custom UI work without requiring any backend changes later.
+- Frontend (post-MVP, deferred): Next.js or Vite React + Tailwind CSS + shadcn/ui, swapped in once the product is validated. Only the frontend changes — FastAPI/`schemas.py` stay as-is since Streamlit already exercises the same API contract.
+- Hosting: Vercel for frontend (once on React); Render, Fly.io, Railway, or a small VM for backend
 - Data: SQLite locally at first, then Postgres if needed; Chroma, Qdrant, or FAISS for vectors
 
 Native mobile should wait until there is evidence that users want the product enough to justify app-store workflows, device testing, and mobile-specific UI work.

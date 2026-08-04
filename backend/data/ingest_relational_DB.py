@@ -39,9 +39,9 @@ def parse_h5_file(h5_path: Path, session: Any) -> None:
         # Artist (skip if no ID)
         artist_id = song_data.get('artist_id')
         if artist_id is not None:
-            artist_id_str = str(artist_id).strip()
+            artist_id_str = artist_id.decode('utf-8', errors='replace').strip()
             artist_name = song_data.get('artist_name')
-            artist_name_str = str(artist_name) if artist_name is not None else ''
+            artist_name_str = artist_name.decode('utf-8', errors='replace') if artist_name is not None else ''
 
             # Check if artist already exists and ingest if not
             existing = session.query(Artist).filter_by(artist_id=artist_id_str).first()
@@ -70,7 +70,7 @@ def parse_h5_file(h5_path: Path, session: Any) -> None:
         
         # Album (surrogate ID: artist_release_title, since MSD has no stable album PK)
         release = song_data.get('release')
-        release_str = str(release) if release is not None else ''
+        release_str = release.decode('utf-8', errors='replace') if release is not None else ''
         year = int(song_data.get('year', 0)) if song_data.get('year') is not None else None
         
         release_id = None
@@ -88,7 +88,7 @@ def parse_h5_file(h5_path: Path, session: Any) -> None:
         
         # Track base row points to artist/album and leaves tag/genre fields for later phases
         title = song_data.get('title')
-        title_str = str(title) if title is not None else ''
+        title_str = title.decode('utf-8', errors='replace') if title is not None else ''
         
         track = Track(
             track_id=str(tid),
