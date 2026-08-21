@@ -22,7 +22,7 @@ from backend.agents.vibe_intent import VibeIntent
 from backend.agents.planner_agent import PlaylistPlan
 
 
-POOL_SIZE = 50
+POOL_SIZE = 20
 DEFAULT_ENERGY_ARC = (
     "start with medium-energy tracks, build toward high energy in the middle, "
     "then wind down with calmer low-energy tracks at the end"

@@ -175,19 +175,34 @@ class LLMClient:
     def __init__(self, model_name,
                  device, api_key,
                  endpoint, temperature,
-                 max_new_tokens):
+                 max_new_tokens,
+                 provider: Optional[str] = None,
+                 top_p: float = 1.0,
+                 stream: bool = False,
+                 compound_custom: Optional[dict] = None):
         self.model_name = model_name
         self.device = device
         self.api_key = api_key
         self.endpoint = endpoint
         self.temperature = temperature
         self.max_new_tokens = max_new_tokens
+        self.provider = provider
+        self.top_p = top_p
+        self.stream = stream
+        self.compound_custom = compound_custom
 
-        if api_key is not None:
+        if provider is None:
+            provider = "hf_api" if api_key is not None else "local"
+
+        if provider == "groq":
+            from groq import Groq
+            self._api_client = Groq(api_key=api_key) if api_key else Groq()
+            self._mode = "groq"
+        elif provider == "hf_api":
             from huggingface_hub import InferenceClient
             self._api_client = InferenceClient(api_key=api_key)
             self._mode = "hf_api"
-        else:
+        elif provider == "local":
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
             self._torch = torch
@@ -198,15 +213,37 @@ class LLMClient:
                 device_map="auto" if self.device == "cuda" else None,
             )
             self._mode = "local"
+        else:
+            raise ValueError("provider must be one of: None, 'hf_api', 'local', 'groq'")
 
     def generate(self, system_prompt, user_input):
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_input},
+        ]
+
+        if self._mode == "groq":
+            response = self._api_client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=self.temperature,
+                max_completion_tokens=self.max_new_tokens,
+                top_p=self.top_p,
+                stream=self.stream,
+                stop=None,
+                compound_custom=self.compound_custom,
+            )
+            if self.stream:
+                return "".join(
+                    chunk.choices[0].delta.content or ""
+                    for chunk in response
+                )
+            return response.choices[0].message.content
+
         if self._mode == "hf_api":
             response = self._api_client.chat_completion(
                 model=self.model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_input},
-                ],
+                messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_new_tokens,
             )
