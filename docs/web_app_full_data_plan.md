@@ -57,29 +57,29 @@ Deliverables:
 
 ## Phase 1: Backend MVP
 
+**Status: Implemented, not yet confirmed working end-to-end.** See `docs/roadmap.md` Known Issues / Next Priorities for the exact blocker.
+
 Goal: expose the existing LangGraph pipeline through a clean API.
 
 Tasks:
 
-- Create FastAPI app in `backend/api/main.py`.
-- Add `GET /health`.
-- Add `POST /recommend`.
-- Add request/response models in `backend/api/schemas.py`.
-- Wrap `run_playlist_graph()` behind the recommendation endpoint.
-- Add error handling for:
-  - parser failure
-  - no candidates
-  - vector DB unavailable
-  - LLM failure
-- Return both user-facing and debug fields.
+- [x] Create FastAPI app in `backend/api/main.py` — `lifespan` context manager builds `LLMClient`/`PlannerAgent`/`PlaylistBuilderAgent` once at startup onto `app.state`, reading `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_TEMPERATURE`, `GROQ_MAX_TOKENS`, `DATABASE_URL`, `CHROMA_PERSIST_DIRECTORY` from the environment.
+- [x] Add `GET /health`.
+- [x] Add `POST /recommend` — `backend/api/routes/recommend.py`, via FastAPI `Depends()` reading the `app.state` singletons (so tests can override them without touching real Groq/DB).
+- [x] Add request/response models in `backend/api/schemas.py`.
+- [x] Wrap `run_playlist_graph()` behind the recommendation endpoint — builds a fresh `PromptParser` per request (reuses the shared `PlannerAgent`/`PlaylistBuilderAgent`).
+- [x] Add error handling for parser failure, no candidates, vector DB unavailable, LLM failure — `_classify_error()` maps exception types/messages to the right HTTP status (422/503/502/500), empty playlist → 404.
+- [x] Return both user-facing and debug fields — `_to_playlist_track()` + `_build_debug()`.
 
-API response shape: defined in `backend/api/schemas.py` (`RecommendResponse`) — that file is now the canonical contract, not this doc. Notably it has no per-track `"why"` field (an earlier version of this doc suggested one; no code path in the pipeline produces a per-track rationale, only a playlist-level one), and every descriptive `PlaylistTrack` field besides `track_id`/`score`/`sources` is optional, since vector-only candidates can be missing `title`/`artist_name` (see `docs/roadmap.md` Known Issues).
+API response shape: defined in `backend/api/schemas.py` (`RecommendResponse`) — that file is the canonical contract, not this doc. No per-track `"why"` field (no code path produces one). `_extract_genre()` in `recommend.py` correctly reconciles `seed_genre` (relational) vs. `genres_csv` (vector) into one `genre` field. `_to_playlist_track()` does **not** yet backfill missing `title`/`artist_name` for vector-only candidates — known issue, still open.
+
+The `GROQ_MODEL` default bug (was `"gpt-oss-120b"`, an invalid Groq model ID) is fixed — `main.py` now defaults to `"openai/gpt-oss-120b"`. `/recommend` still hasn't been exercised via a real HTTP request, though — that verification is still outstanding.
 
 Deliverables:
 
-- `POST /recommend` works locally.
-- `tests/test_api.py` has real API tests.
-- Backend can run with the current subset data.
+- [ ] `POST /recommend` works locally — implemented, `GROQ_MODEL` bug fixed, but end-to-end verification via a real request still hasn't been done.
+- [ ] `tests/test_api.py` has real API tests — still empty.
+- [ ] Backend can run with the current subset data — untested pending the above.
 
 ## Phase 2: Frontend MVP
 
