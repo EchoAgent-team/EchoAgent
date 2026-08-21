@@ -192,7 +192,7 @@ class LLMClient:
         self.compound_custom = compound_custom
 
         if provider is None:
-            provider = "hf_api" if api_key is not None else "local"
+            provider = "groq" if api_key is not None else "local"
 
         if provider == "groq":
             from groq import Groq
