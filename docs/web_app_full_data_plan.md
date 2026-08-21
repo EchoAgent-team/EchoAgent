@@ -27,30 +27,33 @@ Do not wait for the full 1M-song processing pipeline before building the app. Th
 
 ## Phase 0: Project Reset And Scope Lock
 
+**Status: Complete.**
+
 Goal: make the repo runnable and define the app contract.
 
 Tasks:
 
-- Fix `environment.yml` / dependency setup.
-- Decide one local command for backend startup.
-- Decide one local command for frontend startup.
-- Define the minimum product flow:
-  - user enters vibe prompt
-  - backend returns playlist
-  - UI shows tracks, artists, metadata, score/reason
-  - optional debug panel shows parsed intent, plan, retrieval counts
-- Decide what counts as MVP done:
-  - 10 to 20 track playlist
-  - acceptable demo latency
-  - no playback required
-  - Spotify export/linking can be deferred
+- [x] Fix `environment.yml` / dependency setup — see `environment.yml`.
+- [x] Decide one local command for backend startup — `uvicorn backend.api.main:app --reload --port 8000`. Verified working: `GET /health` returns `{"status": "ok"}`.
+- [x] Decide one local command for frontend startup — `streamlit run frontend/app.py` (not yet built). Streamlit will call the FastAPI backend over HTTP rather than calling `run_playlist_graph()` directly, so a later React frontend is a drop-in swap with no backend changes — see "High-Level Recommendation" above.
+- [x] Define the minimum product flow (confirmed):
+  1. User enters a vibe prompt in the frontend.
+  2. Frontend calls `POST /recommend` with `{"prompt": "..."}`.
+  3. Backend runs `run_playlist_graph()` and translates the result into a `RecommendResponse` (see `backend/api/schemas.py`).
+  4. UI shows the playlist: title, artist, album/year, genre/tags, score. **No per-track "why"** — corrected from the original sketch below. `PlaylistBuilderAgent` only produces a playlist-level `rationale`/`energy_arc`, not a per-track explanation, so there is nothing to show per track beyond score.
+  5. Optional debug panel shows parsed intent, planner weights, retrieval counts, and critic result (critic result will be `null` until Phase 5 wires `CriticAgent` into the graph runner).
+- [x] Decide what counts as MVP done (confirmed):
+  - 10–20 track playlist (matches `PlaylistPlan.playlist_size`, default 20, planner range 5–50)
+  - No playback required
+  - Spotify export/linking deferred (Phase 7)
+  - Acceptable demo latency — no fixed number pinned; to be judged once Streamlit is actually calling `/recommend`.
 
 Deliverables:
 
-- Working local dev environment
-- `.env.example`
-- Updated README setup instructions
-- Agreed API request/response schema
+- [x] Working local dev environment
+- [x] `.env.example`
+- [x] Updated README setup instructions
+- [x] Agreed API request/response schema — `backend/api/schemas.py`
 
 ## Phase 1: Backend MVP
 
@@ -70,32 +73,7 @@ Tasks:
   - LLM failure
 - Return both user-facing and debug fields.
 
-Suggested API response shape:
-
-```json
-{
-  "prompt": "late-night rainy city drive",
-  "playlist": [
-    {
-      "track_id": "TRABC123",
-      "title": "Example Track",
-      "artist_name": "Example Artist",
-      "album_title": "Example Album",
-      "year": 2007,
-      "genre": "indie",
-      "score": 0.82,
-      "why": "Matches the low-energy rainy-city vibe."
-    }
-  ],
-  "debug": {
-    "intent": {},
-    "plan": {},
-    "relational_candidate_count": 100,
-    "vector_candidate_count": 100,
-    "fused_candidate_count": 143
-  }
-}
-```
+API response shape: defined in `backend/api/schemas.py` (`RecommendResponse`) — that file is now the canonical contract, not this doc. Notably it has no per-track `"why"` field (an earlier version of this doc suggested one; no code path in the pipeline produces a per-track rationale, only a playlist-level one), and every descriptive `PlaylistTrack` field besides `track_id`/`score`/`sources` is optional, since vector-only candidates can be missing `title`/`artist_name` (see `docs/roadmap.md` Known Issues).
 
 Deliverables:
 

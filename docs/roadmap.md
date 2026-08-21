@@ -24,9 +24,10 @@ Living status doc. Updated as work progresses. For deferred / Phase 2 items see 
 
 ### Stubs / Incomplete
 
-- **`critic_agent.py`**: always returns `accept: True`. LLM-backed critique not yet implemented.
-- **API routes** (`main.py`, `recommend.py`, `health.py`): files exist but are not wired to the assembled graph.
+- **`critic_agent.py`**: the `CriticAgent` class itself is implemented (LLM-backed accept/reason/suggested_adjustments) and verified working standalone in `notebooks/pipeline_tests.ipynb`. It is just not wired into `run_playlist_graph()` — the convenience runner never constructs/passes a `critic_agent`, so `critique_node` always auto-accepts. Wiring it in is Phase 5 of `docs/web_app_full_data_plan.md`.
+- **API routes**: `main.py` (FastAPI app) and `routes/health.py` (`GET /health`) are implemented and verified working. `backend/api/schemas.py` defines the full `/recommend` request/response contract (`RecommendRequest`, `PlaylistTrack`, `CriticReport`, `RecommendDebug`, `RecommendResponse`). `routes/recommend.py` itself — actually calling `run_playlist_graph()` and translating the result — is still empty; this is Phase 1 of `docs/web_app_full_data_plan.md`.
 - **`tests/test_api.py`**: placeholder, no real tests yet.
+- **Frontend**: none exists yet. Decided approach: Streamlit calling the FastAPI backend over HTTP (not calling `run_playlist_graph()` directly), so a later React frontend is a drop-in swap. See `docs/web_app_full_data_plan.md`.
 
 ---
 
@@ -41,8 +42,10 @@ Living status doc. Updated as work progresses. For deferred / Phase 2 items see 
 
 ## Next Priorities
 
-1. **End-to-end graph test** — run `run_playlist_graph()` with real prompts via `langchain_tester.ipynb`, identify and fix integration bugs (start with the `PromptParser.parse()` issue above)
-2. **Fix `environment.yml`** — add missing dependencies so the environment is reproducible
-3. **Implement `critic_agent.py`** — LLM-backed structured review with `accept / reason / suggested_adjustments` output
-4. **Wire API routes** — connect `run_playlist_graph()` to the `POST /recommend` endpoint
-5. **Expand tests** — graph integration tests, API contract tests, critic behavior tests
+`docs/web_app_full_data_plan.md` Phase 0 (dev environment, backend/frontend startup commands, minimum product flow, API schema) is complete. Current priorities are Phase 1 of that plan:
+
+1. **Wire `POST /recommend`** — implement `backend/api/routes/recommend.py`: call `run_playlist_graph()`, translate the result into a `RecommendResponse`, add error handling (parser failure, no candidates, vector DB unavailable, LLM failure)
+2. **Fix the title/artist_name gap** — backfill missing metadata for vector-only candidates via relational lookup by `track_id` before the playlist leaves the backend (see Known Issues above)
+3. **Build the Streamlit frontend** — `frontend/app.py`, calling `/recommend` over HTTP
+4. **Wire `CriticAgent` into `run_playlist_graph()`** — Phase 5, deferred until the above is working end-to-end
+5. **Expand tests** — `tests/test_api.py` real API tests, graph integration tests, critic behavior tests
