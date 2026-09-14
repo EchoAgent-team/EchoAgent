@@ -55,4 +55,4 @@ Living status doc. Updated as work progresses. For deferred / Phase 2 items see 
 2. **Fix the title/artist_name gap** — backfill missing metadata for vector-only candidates via relational lookup by `track_id` in `_to_playlist_track()` (see Known Issues above)
 3. **Build the Streamlit frontend** — `frontend/app.py`, calling `/recommend` over HTTP
 4. **Wire `CriticAgent` into `run_playlist_graph()`** — Phase 5, deferred until the above is working end-to-end
-5. **Expand tests** — `tests/test_api.py` real API tests, graph integration tests, critic behavior tests
+5. **Expand tests** — `tests/test_api.py` now has mocked API contract tests; graph integration tests and critic behavior tests remain open

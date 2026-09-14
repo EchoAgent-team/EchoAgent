@@ -80,7 +80,7 @@ The `GROQ_MODEL` default bug (was `"gpt-oss-120b"`, an invalid Groq model ID) is
 Deliverables:
 
 - [ ] `POST /recommend` works locally — implemented, `GROQ_MODEL` bug fixed, but end-to-end verification via a real request still hasn't been done.
-- [ ] `tests/test_api.py` has real API tests — still empty.
+- [x] `tests/test_api.py` has real API tests — covers `/health`, `/recommend` success mapping/debug output, empty playlist `404`, prompt parse `422`, and request validation `422` with graph/LLM dependencies mocked.
 - [ ] Backend can run with the current subset data — untested pending the above.
 
 ## Phase 2: Frontend MVP
