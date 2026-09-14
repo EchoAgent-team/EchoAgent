@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     llm_client = None
     if api_key:
         llm_client = LLMClient(
-            model_name=os.environ.get("GROQ_MODEL", "gpt-oss-120b"),
+            model_name=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
             device=None,
             api_key=api_key,
             endpoint=None,
