@@ -53,7 +53,7 @@ class PromptParser:
                 system_prompt = self._build_repair_prompt(error_message=last_err or "unknown_validation_error", 
                                                         last_raw=last_raw or "",)
 
-            raw = self.llm_client.generate(system_prompt=system_prompt, user_input=self.user_input)
+            raw = self._generate_json(system_prompt, self.user_input)
             last_raw = raw
             
             try:
@@ -69,6 +69,16 @@ class PromptParser:
     # -------------------------
     # Extraction helpers
     # -------------------------
+
+    def _generate_json(self, system_prompt: str, user_input: str) -> str:
+        try:
+            return self.llm_client.generate(
+                system_prompt=system_prompt,
+                user_input=user_input,
+                json_mode=True,
+            )
+        except TypeError:
+            return self.llm_client.generate(system_prompt=system_prompt, user_input=user_input)
 
     def _extract_json_block(self, text: str) -> str:
         text = (text or "").strip()
@@ -216,23 +226,34 @@ class LLMClient:
         else:
             raise ValueError("provider must be one of: None, 'hf_api', 'local', 'groq'")
 
-    def generate(self, system_prompt, user_input):
+    def generate(self, system_prompt, user_input, json_mode: bool = False):
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_input},
         ]
 
         if self._mode == "groq":
-            response = self._api_client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=self.temperature,
-                max_completion_tokens=self.max_new_tokens,
-                top_p=self.top_p,
-                stream=self.stream,
-                stop=None,
-                compound_custom=self.compound_custom,
-            )
+            request_kwargs = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_completion_tokens": self.max_new_tokens,
+                "top_p": self.top_p,
+                "stream": self.stream,
+                "stop": None,
+                "compound_custom": self.compound_custom,
+            }
+            if json_mode:
+                request_kwargs["response_format"] = {"type": "json_object"}
+            try:
+                response = self._api_client.chat.completions.create(**request_kwargs)
+            except Exception as exc:
+                message = str(exc)
+                if json_mode and "json_validate_failed" in message:
+                    request_kwargs.pop("response_format", None)
+                    response = self._api_client.chat.completions.create(**request_kwargs)
+                else:
+                    raise
             if self.stream:
                 return "".join(
                     chunk.choices[0].delta.content or ""

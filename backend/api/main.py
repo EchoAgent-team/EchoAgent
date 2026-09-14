@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
+from dotenv import load_dotenv
 
 from backend.agents.planner_agent import PlannerAgent
 from backend.agents.playlist_builder import PlaylistBuilderAgent
@@ -13,6 +14,8 @@ from backend.agents.prompt_parser import LLMClient
 from backend.api.routes import health, recommend
 
 PROMPT_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "agents" / "prompt_schema.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(REPO_ROOT / ".env")
 
 
 @asynccontextmanager

@@ -197,9 +197,7 @@ class PlannerAgent:
                     error_message=last_err or "unknown_validation_error",
                     last_raw=last_raw or "",)
 
-            raw = self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_input=user_message,)
+            raw = self._generate_json(system_prompt, user_message)
             last_raw = raw
 
             try:
@@ -216,6 +214,16 @@ class PlannerAgent:
     # -----------------------------------------------------------------------
     # Prompt construction
     # -----------------------------------------------------------------------
+
+    def _generate_json(self, system_prompt: str, user_input: str) -> str:
+        try:
+            return self.llm_client.generate(
+                system_prompt=system_prompt,
+                user_input=user_input,
+                json_mode=True,
+            )
+        except TypeError:
+            return self.llm_client.generate(system_prompt=system_prompt, user_input=user_input)
 
     def _build_system_prompt(self) -> str:
         schema_str = json.dumps(self._OUTPUT_SCHEMA, indent=2, ensure_ascii=True)

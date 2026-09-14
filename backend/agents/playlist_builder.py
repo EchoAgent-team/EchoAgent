@@ -15,6 +15,7 @@ deterministic scoring alone cannot capture.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, List, Optional, Set
 
@@ -23,6 +24,7 @@ from backend.agents.planner_agent import PlaylistPlan
 
 
 POOL_SIZE = 20
+logger = logging.getLogger(__name__)
 DEFAULT_ENERGY_ARC = (
     "start with medium-energy tracks, build toward high energy in the middle, "
     "then wind down with calmer low-energy tracks at the end"
@@ -188,10 +190,7 @@ class PlaylistBuilderAgent:
                     last_raw=last_raw or "",
                 )
 
-            raw = self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_input=user_message,
-            )
+            raw = self._generate_json(system_prompt, user_message)
             last_raw = raw
 
             try:
@@ -213,6 +212,16 @@ class PlaylistBuilderAgent:
     # -----------------------------------------------------------------------
     # Prompt construction
     # -----------------------------------------------------------------------
+
+    def _generate_json(self, system_prompt: str, user_input: str) -> str:
+        try:
+            return self.llm_client.generate(
+                system_prompt=system_prompt,
+                user_input=user_input,
+                json_mode=True,
+            )
+        except TypeError:
+            return self.llm_client.generate(system_prompt=system_prompt, user_input=user_input)
 
     def _build_system_prompt(self) -> str:
         schema_str = json.dumps(self._OUTPUT_SCHEMA, indent=2, ensure_ascii=True)
@@ -376,12 +385,20 @@ def build_playlist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     pool_full = ranked[:POOL_SIZE]
     pool_slim = [_slim_candidate(c) for c in pool_full]
 
-    ordered_ids = agent.build(
-        user_prompt=state["user_prompt"],
-        intent=intent,
-        playlist_plan=plan,
-        pool=pool_slim,
-    )
+    try:
+        ordered_ids = agent.build(
+            user_prompt=state["user_prompt"],
+            intent=intent,
+            playlist_plan=plan,
+            pool=pool_slim,
+        )
+    except Exception as exc:
+        logger.warning("PlaylistBuilderAgent failed; falling back to ranked candidates: %s", exc)
+        ordered_ids = [
+            candidate["track_id"]
+            for candidate in pool_slim[: plan.playlist_size]
+            if candidate.get("track_id")
+        ]
 
     id_to_candidate = {c["track_id"]: c for c in pool_full}
     playlist = [id_to_candidate[tid] for tid in ordered_ids if tid in id_to_candidate]
