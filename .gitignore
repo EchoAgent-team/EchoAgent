@@ -50,6 +50,6 @@ __pycache__/
 backend/data/chroma_db/
 backend/data/*.db
 data/
-
+database/
 # Cursor / local tooling
 .cursor/
