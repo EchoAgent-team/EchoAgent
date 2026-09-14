@@ -57,14 +57,14 @@ Deliverables:
 
 ## Phase 1: Backend MVP
 
-**Status: Implemented, not yet confirmed working end-to-end.** See `docs/roadmap.md` Known Issues / Next Priorities for the exact blocker.
+**Status: Implemented and partially verified; live `/recommend` still has an LLM-output blocker.** See `docs/roadmap.md` Known Issues / Next Priorities for the exact blocker.
 
 Goal: expose the existing LangGraph pipeline through a clean API.
 
 Tasks:
 
-- [x] Create FastAPI app in `backend/api/main.py` — `lifespan` context manager builds `LLMClient`/`PlannerAgent`/`PlaylistBuilderAgent` once at startup onto `app.state`, reading `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_TEMPERATURE`, `GROQ_MAX_TOKENS`, `DATABASE_URL`, `CHROMA_PERSIST_DIRECTORY` from the environment.
-- [x] Add `GET /health`.
+- [x] Create FastAPI app in `backend/api/main.py` — `lifespan` context manager builds `LLMClient`/`PlannerAgent`/`PlaylistBuilderAgent` once at startup onto `app.state`, reading `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_TEMPERATURE`, `GROQ_MAX_TOKENS`, `DATABASE_URL`, `CHROMA_PERSIST_DIRECTORY` from `.env` / the environment.
+- [x] Add `GET /health` — verified locally with `{"status":"ok"}`.
 - [x] Add `POST /recommend` — `backend/api/routes/recommend.py`, via FastAPI `Depends()` reading the `app.state` singletons (so tests can override them without touching real Groq/DB).
 - [x] Add request/response models in `backend/api/schemas.py`.
 - [x] Wrap `run_playlist_graph()` behind the recommendation endpoint — builds a fresh `PromptParser` per request (reuses the shared `PlannerAgent`/`PlaylistBuilderAgent`).
@@ -75,13 +75,15 @@ API response shape: defined in `backend/api/schemas.py` (`RecommendResponse`) �
 
 Open issue: `_to_playlist_track()` does **not** yet backfill missing `title`/`artist_name` for vector-only candidates. `fuse_candidates()` processes retrieved relational candidates first, but it checks only the relational candidate list returned for that request; it does not query SQLite by `track_id` for every vector result. Exact example showing what remains open: SQLite has A, B, C, D; relational retrieval returns A, B; vector retrieval returns B, C. A uses relational metadata. B keeps relational metadata and adds vector score/source. C uses vector metadata because it was absent from the retrieved relational candidates, even if C exists in SQLite. If C's vector metadata only has `track_id` or is missing display fields, the API can return a playlist row without title/artist. This is open for later; `track_id` is sufficient for identity, but not sufficient for display unless the API/front end hydrates by ID before rendering.
 
-The `GROQ_MODEL` default bug (was `"gpt-oss-120b"`, an invalid Groq model ID) is fixed — `main.py` now defaults to `"openai/gpt-oss-120b"`. `/recommend` still hasn't been exercised via a real HTTP request, though — that verification is still outstanding.
+Startup/subset configuration is fixed for the current repo layout: `.env` and `.env.example` point to `DATABASE_URL=sqlite:///database/music_relational.db` and `CHROMA_PERSIST_DIRECTORY=database/chroma_db`, matching the files that exist under `echoagent/database/`. `main.py` now explicitly loads the repo `.env` file. Verified in `echoagent-env`: `GROQ_API_KEY` is present, both dataset paths resolve, and `backend.api.main:app` imports cleanly.
+
+The `GROQ_MODEL` default bug (was `"gpt-oss-120b"`, an invalid Groq model ID) is fixed — `main.py` now defaults to `"openai/gpt-oss-120b"`. `/recommend` has now been exercised via a real HTTP request: the request reaches the LangGraph pipeline and loads data, but live completion is still blocked by the final LLM playlist-selection step returning/triggering invalid JSON behavior. A fallback to ranked candidates was added in `build_playlist_node()` so this should be re-tested after restarting Uvicorn.
 
 Deliverables:
 
-- [ ] `POST /recommend` works locally — implemented, `GROQ_MODEL` bug fixed, but end-to-end verification via a real request still hasn't been done.
+- [ ] `POST /recommend` works locally — implemented and exercised via curl; currently reaches the graph but still needs a clean successful response after the playlist-builder JSON/fallback changes are re-tested.
 - [x] `tests/test_api.py` has real API tests — covers `/health`, `/recommend` success mapping/debug output, empty playlist `404`, prompt parse `422`, and request validation `422` with graph/LLM dependencies mocked.
-- [ ] Backend can run with the current subset data — untested pending the above.
+- [x] Backend can start with the current subset config — `.env` points to `database/music_relational.db` and `database/chroma_db`; `/health` passes and the live `/recommend` request reaches the graph/data-loading path. Full successful `/recommend` response remains open under the deliverable above.
 
 ## Phase 2: Frontend MVP
 
