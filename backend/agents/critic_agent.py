@@ -8,6 +8,8 @@ for the planner to incorporate on a retry.
 
 from __future__ import annotations
 
+from backend.agents.json_output import generate_json, log_repair
+
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -99,12 +101,13 @@ class CriticAgent:
                     last_raw=last_raw or "",
                 )
 
-            raw = self.llm_client.generate(system_prompt=system_prompt, user_input=user_message)
-            last_raw = raw
-
+            last_raw = None
             try:
+                raw = generate_json(self.llm_client, system_prompt, user_message, "CriticAgent", attempt)
+                last_raw = raw
                 return self._validate_and_parse_output(raw)
             except (ValueError, TypeError) as exc:
+                log_repair("CriticAgent", attempt, exc)
                 last_err = str(exc)
                 continue
 

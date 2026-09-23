@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.agents.json_output import generate_json, log_repair
+
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -197,13 +199,14 @@ class PlannerAgent:
                     error_message=last_err or "unknown_validation_error",
                     last_raw=last_raw or "",)
 
-            raw = self._generate_json(system_prompt, user_message)
-            last_raw = raw
-
+            last_raw = None
             try:
+                raw = generate_json(self.llm_client, system_prompt, user_message, "PlannerAgent", attempt)
+                last_raw = raw
                 plan = self._validate_and_parse_output(raw)
                 return plan
             except (ValueError, TypeError) as exc:
+                log_repair("PlannerAgent", attempt, exc)
                 last_err = str(exc)
                 continue
 
@@ -215,15 +218,6 @@ class PlannerAgent:
     # Prompt construction
     # -----------------------------------------------------------------------
 
-    def _generate_json(self, system_prompt: str, user_input: str) -> str:
-        try:
-            return self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_input=user_input,
-                json_mode=True,
-            )
-        except TypeError:
-            return self.llm_client.generate(system_prompt=system_prompt, user_input=user_input)
 
     def _build_system_prompt(self) -> str:
         schema_str = json.dumps(self._OUTPUT_SCHEMA, indent=2, ensure_ascii=True)

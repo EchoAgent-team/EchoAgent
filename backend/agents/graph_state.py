@@ -47,6 +47,9 @@ class PlaylistGraphState(TypedDict, total=False):
     vector_candidates: List[Dict[str, Any]]
     vector_candidate_count: int
 
+    fused_candidate_count: int
+    builder_fallback_used: bool
+    builder_fallback_reason: Optional[str]
     fused_candidates: List[Dict[str, Any]]
     ranked_candidates: List[Dict[str, Any]]
     playlist: List[Dict[str, Any]]

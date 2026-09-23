@@ -34,6 +34,8 @@ class RecommendDebug(BaseModel):
     vector_candidate_count: int
     fused_candidate_count: int
     retry_count: int
+    builder_fallback_used: bool = False
+    builder_fallback_reason: Optional[str] = None
     critic_report: Optional[CriticReport] = None
 
 

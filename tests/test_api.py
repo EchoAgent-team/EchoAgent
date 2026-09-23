@@ -229,3 +229,57 @@ def test_recommend_requires_prompt_field(client: TestClient) -> None:
     response = client.post("/recommend", json={})
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("retry_count", [0, 2])
+def test_recommend_returns_422_when_critic_rejects(monkeypatch, client, retry_count):
+    state = _final_state()
+    state["retry_count"] = retry_count
+    state["critic_report"] = {
+        "accept": False,
+        "reason": "The playlist includes an excluded genre.",
+        "suggested_adjustments": {"exclusion_penalty": 0.9},
+    }
+    monkeypatch.setattr(recommend_route, "run_playlist_graph", lambda **_: state)
+
+    response = client.post("/recommend", json={"prompt": "no metal"})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "playlist_rejected",
+            "message": (
+                "Could not generate a playlist that passed the quality check "
+                "within the allowed attempts. Try rephrasing your request."
+            ),
+            "reason": "The playlist includes an excluded genre.",
+            "retry_count": retry_count,
+        }
+    }
+
+
+def test_recommend_returns_accepted_playlist_after_retry(monkeypatch, client):
+    state = _final_state()
+    state["retry_count"] = 2
+    state["critic_report"] = {
+        "accept": True, "reason": "Matches the request.", "suggested_adjustments": {},
+    }
+    monkeypatch.setattr(recommend_route, "run_playlist_graph", lambda **_: state)
+
+    response = client.post("/recommend", json={"prompt": "rainy drive"})
+
+    assert response.status_code == 200
+    assert len(response.json()["playlist"]) == 2
+    assert response.json()["debug"]["critic_report"]["accept"] is True
+
+
+def test_empty_rejected_playlist_keeps_404(monkeypatch, client):
+    state = _final_state(playlist=[])
+    state["critic_report"] = {
+        "accept": False, "reason": "No tracks.", "suggested_adjustments": {},
+    }
+    monkeypatch.setattr(recommend_route, "run_playlist_graph", lambda **_: state)
+
+    response = client.post("/recommend", json={"prompt": "rare tracks"})
+
+    assert response.status_code == 404

@@ -55,7 +55,7 @@ class AnthropicLLMClient:
         self.model = model
         self.max_tokens = max_tokens
 
-    def generate(self, system_prompt: str, user_input: str) -> str:
+    def generate(self, system_prompt: str, user_input: str, json_mode: bool = False) -> str:
         message = self.client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
@@ -84,7 +84,7 @@ class HuggingFaceInferenceLLMClient:
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
 
-    def generate(self, system_prompt: str, user_input: str) -> str:
+    def generate(self, system_prompt: str, user_input: str, json_mode: bool = False) -> str:
         response = self._client.chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -130,7 +130,7 @@ class HuggingFaceLLMClient:
         if self._tokenizer.pad_token_id is None:
             self._tokenizer.pad_token_id = self._tokenizer.eos_token_id
 
-    def generate(self, system_prompt: str, user_input: str) -> str:
+    def generate(self, system_prompt: str, user_input: str, json_mode: bool = False) -> str:
         import torch
 
         messages = [

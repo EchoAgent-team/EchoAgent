@@ -71,6 +71,8 @@ Tasks:
 - [x] Add error handling for parser failure, no candidates, vector DB unavailable, LLM failure — `_classify_error()` maps exception types/messages to the right HTTP status (422/503/502/500), empty playlist → 404.
 - [x] Return both user-facing and debug fields — `_to_playlist_track()` + `_build_debug()`.
 
+Final critic rejection: a non-empty playlist rejected after the allowed attempts returns HTTP `422` with `detail.code = "playlist_rejected"`, a user-facing `message`, the critic's `reason`, and `retry_count`. Rejected tracks are not returned. An empty playlist retains HTTP `404`. Accepted playlists retain HTTP `200`. Clients should handle both string-valued error details and this structured rejection detail.
+
 API response shape: defined in `backend/api/schemas.py` (`RecommendResponse`) — that file is the canonical contract, not this doc. No per-track `"why"` field (no code path produces one). `_extract_genre()` in `recommend.py` correctly reconciles `seed_genre` (relational) vs. `genres_csv` (vector) into one `genre` field.
 
 Open issue: `_to_playlist_track()` does **not** yet backfill missing `title`/`artist_name` for vector-only candidates. `fuse_candidates()` processes retrieved relational candidates first, but it checks only the relational candidate list returned for that request; it does not query SQLite by `track_id` for every vector result. Exact example showing what remains open: SQLite has A, B, C, D; relational retrieval returns A, B; vector retrieval returns B, C. A uses relational metadata. B keeps relational metadata and adds vector score/source. C uses vector metadata because it was absent from the retrieved relational candidates, even if C exists in SQLite. If C's vector metadata only has `track_id` or is missing display fields, the API can return a playlist row without title/artist. This is open for later; `track_id` is sufficient for identity, but not sufficient for display unless the API/front end hydrates by ID before rendering.
@@ -84,6 +86,16 @@ Deliverables:
 - [ ] `POST /recommend` works locally — implemented and exercised via curl; currently reaches the graph but still needs a clean successful response after the playlist-builder JSON/fallback changes are re-tested.
 - [x] `tests/test_api.py` has real API tests — covers `/health`, `/recommend` success mapping/debug output, empty playlist `404`, prompt parse `422`, and request validation `422` with graph/LLM dependencies mocked.
 - [x] Backend can start with the current subset config — `.env` points to `database/music_relational.db` and `database/chroma_db`; `/health` passes and the live `/recommend` request reaches the graph/data-loading path. Full successful `/recommend` response remains open under the deliverable above.
+
+### JSON reliability and offline integration verification
+
+- Parser, planner, builder, and critic request JSON mode on every attempt. Provider JSON-validation failures, empty content, truncation, malformed JSON, and invalid fields enter the agent's bounded repair loop (three attempts by default). JSON mode is never disabled for a repair.
+- Provider errors such as HTTP 429 propagate through the existing API error mapping; they do not trigger JSON repairs or the builder's ranked-track fallback. Rate-limit backoff and per-agent budget changes remain deferred.
+- Builder validation exhaustion retains the ranked-track fallback for critic review. `debug.builder_fallback_used` and `debug.builder_fallback_reason` describe the final builder pass and reset when a later pass succeeds.
+- INFO logs from `backend.agents.json_output` include agent, attempt, model, finish reason, and available token usage. Repair warnings include agent, attempt, and error type. Configure that logger at INFO to inspect completion diagnostics. Raw prompts and responses are not logged by these diagnostics.
+- `tests/test_json_reliability.py` exercises the real LLM client response handling and the API-to-LangGraph path, scripting only external model transport and retrieval data. It covers acceptance, feedback-driven replanning, final rejection, empty results, bounded retries, and fallback visibility.
+- Run offline checks with `python -m pytest tests/test_json_reliability.py tests/test_api.py tests/test_playlist_builder.py tests/test_candidate_fuser.py tests/test_reranker.py -q`.
+- Live Groq/database smoke testing remains a separate, pending step. Exclusion enforcement and metadata enrichment remain deferred.
 
 ## Phase 2: Frontend MVP
 

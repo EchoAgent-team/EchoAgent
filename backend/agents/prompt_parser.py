@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.agents.json_output import JSONOutputError, check_completion, generate_json, log_repair
+
 import json, re
 from typing import Optional
 from .vibe_intent import VibeIntent
@@ -53,13 +55,14 @@ class PromptParser:
                 system_prompt = self._build_repair_prompt(error_message=last_err or "unknown_validation_error", 
                                                         last_raw=last_raw or "",)
 
-            raw = self._generate_json(system_prompt, self.user_input)
-            last_raw = raw
-            
+            last_raw = None
             try:
+                raw = generate_json(self.llm_client, system_prompt, self.user_input, "PromptParser", attempt)
+                last_raw = raw
                 parsed_output = self._validate_and_parse_output(raw)
                 return parsed_output
-            except ValueError as ve:
+            except (ValueError, TypeError) as ve:
+                log_repair("PromptParser", attempt, ve)
                 last_err = str(ve)
                 continue
         raise ValueError(f"Failed to parse prompt after {self.max_retries} attempts. Last error: {last_err}")
@@ -70,15 +73,6 @@ class PromptParser:
     # Extraction helpers
     # -------------------------
 
-    def _generate_json(self, system_prompt: str, user_input: str) -> str:
-        try:
-            return self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_input=user_input,
-                json_mode=True,
-            )
-        except TypeError:
-            return self.llm_client.generate(system_prompt=system_prompt, user_input=user_input)
 
     def _extract_json_block(self, text: str) -> str:
         text = (text or "").strip()
@@ -248,18 +242,33 @@ class LLMClient:
             try:
                 response = self._api_client.chat.completions.create(**request_kwargs)
             except Exception as exc:
-                message = str(exc)
-                if json_mode and "json_validate_failed" in message:
-                    request_kwargs.pop("response_format", None)
-                    response = self._api_client.chat.completions.create(**request_kwargs)
-                else:
-                    raise
+                body = getattr(exc, "body", None)
+                error = body.get("error", body) if isinstance(body, dict) else {}
+                code = error.get("code") if isinstance(error, dict) else None
+                if json_mode and code == "json_validate_failed":
+                    check_completion(None, "json_validate_failed", None, self.model_name, False)
+                    raise JSONOutputError("Provider rejected generated JSON (json_validate_failed).") from exc
+                raise
             if self.stream:
-                return "".join(
-                    chunk.choices[0].delta.content or ""
-                    for chunk in response
-                )
-            return response.choices[0].message.content
+                parts = []
+                finish_reason = None
+                usage = None
+                for chunk in response:
+                    usage = getattr(chunk, "usage", None) or usage
+                    groq_info = getattr(chunk, "x_groq", None)
+                    usage = getattr(groq_info, "usage", None) or usage
+                    if chunk.choices:
+                        choice = chunk.choices[0]
+                        parts.append(choice.delta.content or "")
+                        finish_reason = choice.finish_reason or finish_reason
+                if json_mode and finish_reason is None:
+                    finish_reason = "stream_interrupted"
+                return check_completion("".join(parts), finish_reason, usage, self.model_name, json_mode)
+            choice = response.choices[0]
+            return check_completion(
+                choice.message.content, choice.finish_reason,
+                getattr(response, "usage", None), self.model_name, json_mode,
+            )
 
         if self._mode == "hf_api":
             response = self._api_client.chat_completion(
@@ -267,8 +276,13 @@ class LLMClient:
                 messages=messages,
                 temperature=self.temperature,
                 max_tokens=self.max_new_tokens,
+                **({"response_format": {"type": "json_object"}} if json_mode else {}),
             )
-            return response.choices[0].message.content
+            choice = response.choices[0]
+            return check_completion(
+                choice.message.content, choice.finish_reason,
+                getattr(response, "usage", None), self.model_name, json_mode,
+            )
 
         # local HF inference
         torch = self._torch
@@ -283,10 +297,14 @@ class LLMClient:
                 do_sample=(self.temperature > 0.0),
                 temperature=max(self.temperature, 1e-6),
             )
-        decoded_text = self._tokens.decode(output[0], skip_special_tokens=True)
-        marker = "ASSISTANT:"
-        return decoded_text.split(marker, 1)[-1].strip() if marker in decoded_text else decoded_text.strip()
-        
+        new_tokens = output[0][inputs["input_ids"].shape[-1]:]
+        decoded_text = self._tokens.decode(new_tokens, skip_special_tokens=True).strip()
+        eos_ids = self._model.generation_config.eos_token_id
+        eos_ids = eos_ids if isinstance(eos_ids, list) else [eos_ids]
+        ended = len(new_tokens) > 0 and int(new_tokens[-1]) in eos_ids
+        finish_reason = "length" if len(new_tokens) >= self.max_new_tokens and not ended else "stop"
+        return check_completion(decoded_text, finish_reason, None, self.model_name, json_mode)
+
 
 
 # Convenience function if you want a functional API

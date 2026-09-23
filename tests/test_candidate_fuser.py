@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backend.agents.candidate_fuser import candidate_fusion_node, fuse_candidates
+from backend.agents.planner_agent import PlaylistPlan
 
 
 class CandidateFuserTests(unittest.TestCase):
@@ -37,7 +38,7 @@ class CandidateFuserTests(unittest.TestCase):
         self.assertEqual(fused[0]["sources"], ["relational", "vector"])
         self.assertEqual(fused[0]["relational_candidate"]["title"], "Night Drive")
         self.assertEqual(fused[0]["vector_candidate"]["vector_rank"], 1)
-        self.assertEqual(fused[0]["score"], 2.0)
+        self.assertEqual(fused[0]["retrieval_score"], 2.0)
 
     def test_keeps_relational_only_and_vector_only_candidates(self):
         relational_candidates = [{"track_id": "TR_REL", "title": "Structured Match"}]
@@ -66,8 +67,8 @@ class CandidateFuserTests(unittest.TestCase):
         )
 
         self.assertEqual(fused[0]["track_id"], "TR_FIRST")
-        self.assertEqual(fused[0]["score"], 1.0)
-        self.assertEqual(fused[1]["score"], 0.5)
+        self.assertEqual(fused[0]["retrieval_score"], 1.0)
+        self.assertEqual(fused[1]["retrieval_score"], 0.5)
 
     def test_gets_track_id_from_vector_metadata(self):
         fused = fuse_candidates(
@@ -85,10 +86,7 @@ class CandidateFuserTests(unittest.TestCase):
     def test_candidate_fusion_node_uses_playlist_plan_weights(self):
         output = candidate_fusion_node(
             {
-                "playlist_plan": {
-                    "relational_weight": 2.0,
-                    "semantic_weight": 3.0,
-                },
+                "playlist_plan": PlaylistPlan(relational_weight=0.3, semantic_weight=0.4),
                 "relational_candidates": [{"track_id": "TR001"}],
                 "vector_candidates": [{"track_id": "TR001", "vector_rank": 1}],
             }
@@ -96,7 +94,7 @@ class CandidateFuserTests(unittest.TestCase):
 
         self.assertEqual(output["fused_candidate_count"], 1)
         self.assertEqual(output["fused_candidates"][0]["track_id"], "TR001")
-        self.assertEqual(output["fused_candidates"][0]["score"], 5.0)
+        self.assertEqual(output["fused_candidates"][0]["retrieval_score"], 0.7)
 
 
 if __name__ == "__main__":

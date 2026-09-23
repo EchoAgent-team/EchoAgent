@@ -14,6 +14,8 @@ deterministic scoring alone cannot capture.
 
 from __future__ import annotations
 
+from backend.agents.json_output import generate_json, log_repair
+
 from dataclasses import replace
 import json
 import logging
@@ -191,10 +193,10 @@ class PlaylistBuilderAgent:
                     last_raw=last_raw or "",
                 )
 
-            raw = self._generate_json(system_prompt, user_message)
-            last_raw = raw
-
+            last_raw = None
             try:
+                raw = generate_json(self.llm_client, system_prompt, user_message, "PlaylistBuilderAgent", attempt)
+                last_raw = raw
                 track_ids = self._validate_and_parse_output(
                     raw,
                     pool_ids=pool_ids,
@@ -202,6 +204,7 @@ class PlaylistBuilderAgent:
                 )
                 return track_ids
             except (ValueError, TypeError) as exc:
+                log_repair("PlaylistBuilderAgent", attempt, exc)
                 last_err = str(exc)
                 continue
 
@@ -214,15 +217,6 @@ class PlaylistBuilderAgent:
     # Prompt construction
     # -----------------------------------------------------------------------
 
-    def _generate_json(self, system_prompt: str, user_input: str) -> str:
-        try:
-            return self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_input=user_input,
-                json_mode=True,
-            )
-        except TypeError:
-            return self.llm_client.generate(system_prompt=system_prompt, user_input=user_input)
 
     def _build_system_prompt(self) -> str:
         schema_str = json.dumps(self._OUTPUT_SCHEMA, indent=2, ensure_ascii=True)
@@ -396,12 +390,13 @@ def build_playlist_node(state: Dict[str, Any]) -> Dict[str, Any]:
             break
 
     if not pool_full:
-        return {"playlist": []}
+        return {"playlist": [], "builder_fallback_used": False, "builder_fallback_reason": None}
 
     # Keep the original request in graph state for the critic to evaluate.
     builder_plan = replace(plan, playlist_size=min(plan.playlist_size, len(pool_full)))
     pool_slim = [_slim_candidate(c) for c in pool_full]
 
+    fallback_reason = None
     try:
         ordered_ids = agent.build(
             user_prompt=state["user_prompt"],
@@ -409,7 +404,8 @@ def build_playlist_node(state: Dict[str, Any]) -> Dict[str, Any]:
             playlist_plan=builder_plan,
             pool=pool_slim,
         )
-    except Exception as exc:
+    except ValueError as exc:
+        fallback_reason = str(exc)
         logger.warning("PlaylistBuilderAgent failed; falling back to ranked candidates: %s", exc)
         ordered_ids = [
             candidate["track_id"]
@@ -420,4 +416,8 @@ def build_playlist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     id_to_candidate = {c["track_id"]: c for c in pool_full}
     playlist = [id_to_candidate[tid] for tid in ordered_ids if tid in id_to_candidate]
 
-    return {"playlist": playlist}
+    return {
+        "playlist": playlist,
+        "builder_fallback_used": fallback_reason is not None,
+        "builder_fallback_reason": fallback_reason,
+    }

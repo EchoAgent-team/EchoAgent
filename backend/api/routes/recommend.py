@@ -119,6 +119,8 @@ def _build_debug(final_state: Dict[str, Any]) -> RecommendDebug:
         vector_candidate_count=final_state.get("vector_candidate_count", 0),
         fused_candidate_count=final_state.get("fused_candidate_count", 0),
         retry_count=final_state.get("retry_count", 0),
+        builder_fallback_used=final_state.get("builder_fallback_used", False),
+        builder_fallback_reason=final_state.get("builder_fallback_reason"),
         critic_report=CriticReport(**critic_report) if critic_report else None,
     )
 
@@ -195,6 +197,21 @@ def recommend(
         raise HTTPException(
             status_code=404,
             detail="No tracks matched this request. Try broadening the prompt.",
+        )
+
+    critic_report = final_state.get("critic_report") or {}
+    if critic_report.get("accept") is False:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "playlist_rejected",
+                "message": (
+                    "Could not generate a playlist that passed the quality check "
+                    "within the allowed attempts. Try rephrasing your request."
+                ),
+                "reason": critic_report.get("reason") or "The playlist did not pass the quality check.",
+                "retry_count": final_state.get("retry_count", 0),
+            },
         )
 
     return RecommendResponse(
