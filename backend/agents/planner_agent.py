@@ -16,7 +16,7 @@ from .vibe_intent import VibeIntent
 class RetrievalLimits:
     """Per-source candidate caps passed to the retrieval workers."""
     n_vector: int = 100
-    n_relational: int = 100
+    n_relational: int = 10000
 
     def validate(self) -> None:
         for attr in ("n_vector", "n_relational"):

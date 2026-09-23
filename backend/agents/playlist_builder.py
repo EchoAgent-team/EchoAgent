@@ -2,7 +2,7 @@
 Playlist Builder Agent for EchoAgent.
 
 Two-stage pipeline:
-  1. Code  — trims ranked_candidates to a manageable pool (top POOL_SIZE by score)
+  1. Code  — trims ranked_candidates to a manageable pool (top max(POOL_SIZE, playlist_size) by score)
              and slims each candidate to the fields the LLM needs.
   2. LLM   — selects playlist_size tracks from the pool and orders them,
              choosing an energy arc that fits the original prompt context.
@@ -14,6 +14,7 @@ deterministic scoring alone cannot capture.
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import logging
 import re
@@ -368,7 +369,7 @@ def build_playlist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     LangGraph node interface for PlaylistBuilderAgent.
 
     Code path:
-      1. Trim ranked_candidates to top POOL_SIZE.
+      1. Collect enough unique ranked candidates for the requested size.
       2. Slim each candidate to LLM-friendly fields.
 
     LLM path:
@@ -382,14 +383,30 @@ def build_playlist_node(state: Dict[str, Any]) -> Dict[str, Any]:
     intent: VibeIntent = state["intent"]
     agent: PlaylistBuilderAgent = state["playlist_builder_agent"]
 
-    pool_full = ranked[:POOL_SIZE]
+    pool_limit = max(POOL_SIZE, plan.playlist_size)
+    pool_full = []
+    seen_ids: Set[str] = set()
+    for candidate in ranked:
+        track_id = candidate.get("track_id")
+        if not isinstance(track_id, str) or not track_id or track_id in seen_ids:
+            continue
+        seen_ids.add(track_id)
+        pool_full.append(candidate)
+        if len(pool_full) >= pool_limit:
+            break
+
+    if not pool_full:
+        return {"playlist": []}
+
+    # Keep the original request in graph state for the critic to evaluate.
+    builder_plan = replace(plan, playlist_size=min(plan.playlist_size, len(pool_full)))
     pool_slim = [_slim_candidate(c) for c in pool_full]
 
     try:
         ordered_ids = agent.build(
             user_prompt=state["user_prompt"],
             intent=intent,
-            playlist_plan=plan,
+            playlist_plan=builder_plan,
             pool=pool_slim,
         )
     except Exception as exc:

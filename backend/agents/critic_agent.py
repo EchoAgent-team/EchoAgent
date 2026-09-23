@@ -258,17 +258,7 @@ class CriticAgent:
 # ---------------------------------------------------------------------------
 
 def critique_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    agent: CriticAgent = state.get("critic_agent")  # type: ignore[assignment]
-
-    if agent is None:
-        return {
-            "critic_report": {
-                "accept": True,
-                "reason": "no critic_agent in state — auto-accepted",
-                "suggested_adjustments": {},
-            },
-            "retry_count": state.get("retry_count", 0) + 1,
-        }
+    agent: CriticAgent = state["critic_agent"]
 
     report = agent.critique(
         user_prompt=state["user_prompt"],
@@ -279,5 +269,4 @@ def critique_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "critic_report": report,
-        "retry_count": state.get("retry_count", 0) + 1,
     }

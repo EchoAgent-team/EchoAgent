@@ -17,6 +17,8 @@ Deterministic nodes:  retrieve_relational, retrieve_vector, fuse_candidates, rer
 
 from __future__ import annotations
 
+import json
+
 from typing import Any, Dict, Literal
 
 from langgraph.graph import END, StateGraph
@@ -29,7 +31,7 @@ from backend.agents.relational_retrieval_agent import relational_retrieval_node
 from backend.agents.vector_retrieval_agent import vector_retrieval_node
 from backend.agents.reranker import reranker_node
 from backend.agents.playlist_builder import build_playlist_node, PlaylistBuilderAgent
-from backend.agents.critic_agent import critique_node    # stub — not yet implemented
+from backend.agents.critic_agent import CriticAgent, critique_node
 
 
 # ---------------------------------------------------------------------------
@@ -48,23 +50,22 @@ def parse_intent_node(state: PlaylistGraphState) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def plan_node(state: PlaylistGraphState) -> Dict[str, Any]:
-    """
-    Run PlannerAgent to produce a PlaylistPlan.
-
-    On a critic retry the critic_report's suggested_adjustments are available
-    in state but the planner currently re-derives the plan from scratch.
-    Downstream callers can extend this to seed the LLM with the adjustments.
-    """
+    """Plan the playlist, incorporating critic feedback on each retry."""
     agent: PlannerAgent = state["planner_agent"]
-    plan = agent.plan(
-        user_prompt=state["user_prompt"],
-        intent=state["intent"],
-    )
+    user_prompt = state["user_prompt"]
     retry_count = state.get("retry_count", 0)
-    return {
-        "playlist_plan": plan,
-        "retry_count": retry_count,
-    }
+    report = state.get("critic_report")
+    if report and not report.get("accept", True):
+        user_prompt += (
+            "\n\nRevise the previous playlist strategy using this critic feedback."
+            "\nPREVIOUS PLAN:\n"
+            + json.dumps(state["playlist_plan"].to_dict())
+            + "\nCRITIC FEEDBACK:\n"
+            + json.dumps(report)
+        )
+        retry_count += 1
+    plan = agent.plan(user_prompt=user_prompt, intent=state["intent"])
+    return {"playlist_plan": plan, "retry_count": retry_count}
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +170,7 @@ def run_playlist_graph(
     database_url: str | None = None,
     chroma_persist_directory: str | None = None,
     max_retries: int = 2,
+    critic_agent: CriticAgent | None = None,
 ) -> PlaylistGraphState:
     """
     Run the full playlist graph for a single user prompt.
@@ -181,16 +183,22 @@ def run_playlist_graph(
         database_url:              Optional SQLAlchemy DB URL override.
         chroma_persist_directory:  Optional Chroma persistence path override.
         max_retries:               Maximum critic retry loops (default 2).
+        critic_agent:              Optional critic; defaults to the planner's LLM client.
 
     Returns:
         Final PlaylistGraphState with state.playlist populated.
     """
+    if max_retries < 0:
+        raise ValueError("max_retries must be non-negative")
+    if critic_agent is None:
+        critic_agent = CriticAgent(llm_client=planner_agent.llm_client)
     graph = build_playlist_graph()
 
     initial_state: PlaylistGraphState = {
         "user_prompt": user_prompt,
         "prompt_parser": prompt_parser,
         "planner_agent": planner_agent,
+        "critic_agent": critic_agent,
         "playlist_builder_agent": playlist_builder_agent,
         "database_url": database_url,
         "chroma_persist_directory": chroma_persist_directory,
@@ -200,4 +208,6 @@ def run_playlist_graph(
         "errors": [],
     }
 
-    return graph.invoke(initial_state)
+    return graph.invoke(
+        initial_state, config={"recursion_limit": 10 + 8 * (max_retries + 1)}
+    )

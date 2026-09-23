@@ -31,6 +31,7 @@ class PlaylistGraphState(TypedDict, total=False):
 
     user_prompt: str
     prompt_parser: Any
+    critic_agent: Any
     planner_agent: Any
     playlist_builder_agent: Any
 
