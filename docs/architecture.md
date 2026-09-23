@@ -27,7 +27,7 @@ PlaylistBuilderAgent (LLM — selects and orders final tracks)
   ↓
 CriticAgent (LLM — accepts or suggests adjustments)
   ↓
-Accept → output   /   Reject → back to Planner (capped at max_retries)
+Accept → output / Reject → Planner (bounded retries) / Exhausted rejection → API 422
 ```
 
 LangGraph nodes: `parse_intent → plan → retrieve_relational + retrieve_vector → fuse_candidates → rerank → build_playlist → critique`
@@ -35,16 +35,16 @@ LangGraph nodes: `parse_intent → plan → retrieve_relational + retrieve_vecto
 ## Where LLMs Are Used and Why
 
 ### PromptParser (Intent Agent)
-Natural language is inherently ambiguous. The same word ("dark", "chill", "heavy") means different things across contexts and users. Code cannot reliably extract hard constraints, soft preferences, and exclusions from free-form text. The LLM outputs a structured `VibeIntent` object; downstream code never touches raw text again.
+Natural language is inherently ambiguous. The same word ("dark", "chill", "heavy") means different things across contexts and users. Code cannot reliably extract hard constraints, soft preferences, and exclusions from free-form text. The LLM outputs a structured `VibeIntent` object; deterministic retrieval consumes structured intent; planner, builder, and critic also receive the original prompt.
 
 ### PlannerAgent (Taste Strategy)
 The planner reads the prompt and `VibeIntent` and decides the scoring strategy: how many tracks, what weight to give semantic similarity vs. relational matches vs. soft preferences, how strict to be on diversity, and retrieval limits. These are subjective tradeoffs — code has no good way to decide that a "rainy night" prompt should weight semantic similarity at 0.55 while a "90s grunge" prompt should weight relational genre matching more heavily. The LLM produces a `PlaylistPlan` dataclass; the code executes it.
 
 ### PlaylistBuilderAgent
-After deterministic ranking, the builder makes final selection and ordering decisions — which tracks to include, how to shape energy flow, final artist diversity. This is another taste judgment call better suited to an LLM than a fixed heuristic.
+After deterministic ranking, the builder selects and orders tracks. The pool contains up to `max(20, playlist_size)` unique valid track IDs. If fewer tracks exist, a copy of the plan limits the builder to the available count; the original target remains in graph state for critic review. Empty pools skip the builder model call. Artist diversity is model-guided, not a deterministic guarantee.
 
 ### CriticAgent
-The critic reviews the completed playlist against the original prompt and plan. It can accept or suggest concrete adjustments (e.g. "increase low-energy weight", "reduce genre concentration"). This gives the system an agentic feedback loop without making the ranking opaque. A hard cap of `max_retries` prevents infinite loops.
+The critic reviews the completed playlist against the original prompt and plan. It can accept or suggest concrete adjustments (e.g. "increase semantic weight", "raise genre-concentration penalty"). This gives the system an agentic feedback loop without making the ranking opaque. The runner supplies a critic by default using the planner's LLM client, or accepts an explicit critic. A hard cap of `max_retries` prevents infinite loops.
 
 ## Why Not Pure LLM Ranking
 
@@ -62,7 +62,7 @@ The LLM decides *what to optimize for*. Code does the optimization.
 
 ## VibeIntent as the Interface Contract
 
-`VibeIntent` is the stable boundary between language understanding and retrieval logic. It has exactly four keys: `semantic_query`, `hard_constraints`, `soft_preferences`, `exclusions`. Nothing downstream touches raw text. Nothing upstream knows about SQL or Chroma.
+`VibeIntent` is the stable boundary between language understanding and retrieval logic. It has exactly four keys: `semantic_query`, `hard_constraints`, `soft_preferences`, `exclusions`. Deterministic retrieval uses this structured contract. Later LLM agents also receive the original prompt; they do not need to know the SQL or Chroma implementation.
 
 This boundary makes each layer independently testable and replaceable.
 
@@ -84,25 +84,26 @@ Candidates from both stores are merged by `track_id` in `CandidateFuser`. Tracks
 
 ## Scoring and Ranking
 
-`Reranker` computes a single `final_score` per candidate using planner-supplied weights:
+`CandidateFuser` computes `retrieval_score` from the relational-source weight and reciprocal vector rank. `Reranker` then computes:
 
-```
-final_score = (semantic_weight × vector_similarity)
-            + (relational_weight × relational_match_flag)
-            + (soft_preference_weight × soft_match_score)
-            + (novelty_weight × novelty_bonus)
-            - (exclusion_penalty × exclusion_match)
-            - (artist_repeat_penalty × artist_repeat_count)
-            - (genre_concentration_penalty × genre_concentration)
+```text
+score = retrieval_score
+      + semantic_weight * semantic_score
+      + soft_preference_weight * soft_match_score
+      - exclusion_penalty * exclusion_match
 ```
 
-Score components are preserved on each candidate for traceability and critic review.
+Score components are preserved in `ranking_debug`. The plan also carries novelty and diversity controls, but this deterministic reranker does not implement all of them as score terms. Artist-repeat guidance is provided to the builder. Exclusion penalties are not hard filtering; deterministic exclusion enforcement is deferred.
 
 ## Retry Logic
 
-The critic routes to one of two outcomes:
-- `accept: True` → end of graph, return playlist
-- `accept: False` + `retry_count < max_retries` → route back to `plan` node with `suggested_adjustments` in state
-- `accept: False` + retries exhausted → return best-effort playlist
+Two retry mechanisms are separate:
 
-The planner can read `suggested_adjustments` on retry to modify weights. `max_retries` defaults to 2.
+- **JSON repair:** each structured agent has up to three generation attempts by default. JSON mode stays enabled. Provider JSON-validation failures, empty content, token-limit truncation, malformed JSON, and invalid fields enter repair. Groq provider errors such as 429 propagate through the API error mapper instead.
+- **Critic replanning:** accepted reports end the graph. Rejection with retries remaining returns to `plan`, which includes the previous plan, critic reason, and suggested adjustments in the planner input. `retry_count` counts replans, not reviews; the default `max_retries=2` allows an initial playlist plus two revisions.
+
+An exhausted critic rejection ends graph execution with the rejected state, but the API withholds those tracks and returns HTTP 422 with `detail.code = "playlist_rejected"`, a message, reason, and retry count. Empty playlists retain HTTP 404.
+
+Builder validation exhaustion falls back to ranked candidates for critic review. `debug.builder_fallback_used` and `debug.builder_fallback_reason` describe the final pass and reset after a successful later build. Provider failures are not converted into that fallback. A Groq 429 currently becomes API 502; application-level quota backoff and per-agent budgets are deferred.
+
+Completion diagnostics use request-local context to log agent, attempt, model, finish reason, and available token usage without storing per-request state on shared clients. See [testing and troubleshooting](testing.md) for logging configuration and offline integration coverage. The latest live tests were quota-blocked; offline success does not establish live acceptance.

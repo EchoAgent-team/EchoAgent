@@ -30,7 +30,23 @@ uvicorn backend.api.main:app --reload --port 8000
 curl http://localhost:8000/health
 ```
 
-There's no frontend yet — the plan is a Streamlit app (`streamlit run frontend/app.py`, once built) that calls the backend over HTTP rather than calling `run_playlist_graph()` directly, so it exercises the same `/recommend` contract a future React frontend would use. Until then, run `notebooks/pipeline_tests.ipynb` to exercise the full playlist pipeline directly — it wires up a Groq-backed LLM client and calls `run_playlist_graph()` end to end.
+The next product milestone is a Streamlit frontend (`streamlit run frontend/app.py`, once built) calling FastAPI over HTTP. The backend, critic loop, JSON repairs, and offline graph/API tests are implemented. A successful live accepted playlist on the latest code remains unverified: recent calls hit Groq token-per-minute limits.
+
+Test the API from another terminal:
+
+```bash
+curl -sS -i 'http://127.0.0.1:8000/recommend' -H 'Content-Type: application/json' -d '{"prompt":"late-night rainy city drive"}'
+```
+
+Run the focused offline suite (last result: **85 tests passed**; no real Groq/database calls):
+
+```bash
+python -m pytest tests/test_json_reliability.py tests/test_api.py tests/test_playlist_builder.py tests/test_candidate_fuser.py tests/test_reranker.py -q
+```
+
+Accepted playlists return 200. Final critic rejection returns 422 with `detail.code = "playlist_rejected"`, message, reason, and retry count; no rejected tracks are returned. Empty results return 404. Groq failures, including upstream 429 quota errors, currently return API 502. Successful response debug data includes `builder_fallback_used` and `builder_fallback_reason`.
+
+See [testing and troubleshooting](docs/testing.md) for error interpretation and verification limits, and [the web-app plan](docs/web_app_full_data_plan.md) for milestones. Rate-limit backoff, per-agent token budgets, strict exclusion enforcement, and metadata enrichment are explicitly deferred; frontend development is not skipped.
 
 ## ⚙️ System Overview
 
@@ -47,10 +63,11 @@ flowchart TD
     F --> H[Candidate fusion]
     G --> H
     H --> I[Ranking and playlist assembly]
-    I --> J[Playlist output]
+    I --> J[Critic review]
+    J --> K[Accepted playlist or bounded replanning]
 ```
 
-This diagram reflects the current architectural intent more accurately than the previous README because it centers the existing parser, typed intent object, mapper, and vector retrieval wrapper that are already present in the repository. The retrieval and ranking path is deliberately system-controlled, while the prompt interpretation edge is where LLM-based reasoning is currently most useful. 
+The pipeline combines deterministic retrieval and scoring with LLM-driven parsing, planning, playlist selection, and critic review.
 
 ## 🏗 Current architecture
 
@@ -118,7 +135,7 @@ flowchart LR
 
 A central design decision in this project is to be selective about where agentic reasoning is useful. Prompt interpretation is inherently ambiguous and benefits from LLM-based parsing, while retrieval mapping and database querying are better handled as deterministic system components. 
 
-The planned orchestration direction is therefore not "everything is an agent," but rather a mixed system of LLM-driven and deterministic nodes connected through LangGraph. That allows the project to showcase agentic workflow design without sacrificing traceability or engineering rigor. [
+LangGraph connects LLM-driven agents with deterministic retrieval and scoring nodes. Each stage has an explicit input and output contract.
 
 ## 📈 LangGraph workflow
 
@@ -126,16 +143,21 @@ The orchestration layer is implemented in `backend/agents/playlist_graph.py`. Th
 
 ```mermaid
 flowchart TD
-    A[User prompt] --> B[parse_intent node]
-    B --> C[relational_mapper node]
-    C --> D[relational_retrieval node]
-    B --> E[vector_retrieval node]
-    D --> F[fusion_ranking node]
+    A[User prompt] --> B[parse_intent]
+    B --> C[plan]
+    C --> D[retrieve_relational]
+    C --> E[retrieve_vector]
+    D --> F[fuse_candidates]
     E --> F
-    F --> G[playlist_builder node]
-    G --> H[critic node optional]
-    H --> I[playlist output]
+    F --> G[rerank]
+    G --> H[build_playlist]
+    H --> I[critique]
+    I -->|Accept| J[API 200 playlist]
+    I -->|Reject, retries remain| C
+    I -->|Reject, retries exhausted| K[API 422 rejection]
 ```
+
+Empty playlists return API 404. Provider and parsing failures follow the [documented error mapping](docs/testing.md).
 
 This graph reflects the implemented workflow: one stateful LangGraph pipeline combining parsed intent, deterministic retrieval, semantic retrieval, candidate fusion, scoring, and playlist assembly. The critic routes back to the planner on rejection, capped at `max_retries`.
 
@@ -150,17 +172,15 @@ What is implemented:
 - Chroma-backed embedding management and semantic retrieval utilities.
 - `CandidateFuser` merging relational and vector candidates by track ID.
 - Deterministic `Reranker` executing planner-supplied weights with per-candidate score components.
-- `PlaylistBuilderAgent` with artist-repeat and genre-concentration controls.
+- `PlaylistBuilderAgent` with model-guided diversity, unique-ID validation, and a pool that expands to the requested size; short pools use available unique tracks.
 - Full LangGraph orchestration graph with parallel retrieval, critic routing, and retry loop.
 - Shared `PlaylistGraphState` schema across all nodes.
-- `CriticAgent` with LLM-backed structured review (accept/reason/suggested_adjustments) — implemented and verified standalone, but not yet wired into `run_playlist_graph()`.
-- FastAPI app with a working `GET /health` endpoint.
+- `CriticAgent` integrated into the runner, with previous-plan/feedback input to replanning and capped retries.
+- FastAPI `GET /health` and `POST /recommend`, including final-rejection handling.
+- JSON mode across all four agents, bounded repairs, completion diagnostics, and ranked-track fallback visibility.
+- Offline API and real-graph tests with scripted external I/O; focused suite: 85 passed.
 
-What is actively being built next:
-
-- Wiring `CriticAgent` into `run_playlist_graph()` so critique actually runs as part of the graph.
-- `POST /recommend`, wrapping `run_playlist_graph()` behind the API.
-- A frontend.
+Next: the Streamlit frontend MVP. Live acceptance verification remains pending under the current Groq quota; deferred backend work is tracked in [future work](docs/future.md).
 
 ## 📁 Repository structure
 
@@ -195,21 +215,21 @@ This structure reflects the current emphasis of the repository: prompt understan
 - SQLAlchemy-backed relational storage over SQLite today, with the schema written in a way that can also support PostgreSQL. 
 - ChromaDB plus sentence-transformer embeddings for semantic retrieval. 
 - Transformer-based LLM prompting for schema-constrained prompt parsing. 
-- LangGraph as the planned orchestration layer for the multi-step retrieval and playlist workflow. 
-- FastAPI and an interactive front end as the planned serving layer. 
+- LangGraph orchestrates the multi-step retrieval and playlist workflow.
+- FastAPI serves the backend; a Streamlit frontend is planned.
 
 ## 🛣️ Near-term roadmap
 
-- Wire `CriticAgent` into `run_playlist_graph()` so the retry loop actually runs.
-- Wrap `run_playlist_graph()` behind `POST /recommend`.
-- Build the frontend MVP.
-- Expand test coverage: graph integration tests, API contract tests, critic behavior.
+- Build the Streamlit frontend against the current API contract, including error and debug displays.
+- Verify a fully accepted live playlist when provider quota permits.
+- Continue the full-dataset processing track independently of the subset UI.
+- Keep metadata enrichment, strict exclusion enforcement, and rate-limit improvements deferred as agreed.
 
 ## Future directions
-Phase 2:
+Post-MVP:
 - Live list of tracks which the user can send to their audio service of choice (Spotify, Apple Music, etc.)
 - User feedback loop for refining playlist results over time.
 
 ## Notes
 
-The public README focuses on architecture, current progress, and next steps. The current state of the project is best described as a partially implemented hybrid retrieval system with a clear path toward LangGraph-based orchestration and playlist generation. 
+The backend hybrid retrieval and agent workflow is implemented and tested offline. The frontend is next; live acceptance and the explicitly deferred improvements remain open.

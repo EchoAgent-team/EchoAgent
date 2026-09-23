@@ -10,7 +10,7 @@ Recommended stack:
 
 - Backend: FastAPI + existing LangGraph pipeline
 - Frontend (MVP): Streamlit, calling the FastAPI backend over HTTP (not calling `run_playlist_graph()` directly) — same client-agnostic `/recommend` contract a future React frontend would use. Fast to build given limited frontend experience, and defers the fully-custom UI work without requiring any backend changes later.
-- Frontend (post-MVP, deferred): Next.js or Vite React + Tailwind CSS + shadcn/ui, swapped in once the product is validated. Only the frontend changes — FastAPI/`schemas.py` stay as-is since Streamlit already exercises the same API contract.
+- Frontend (post-MVP, deferred): Next.js or Vite React + Tailwind CSS + shadcn/ui, swapped in once the product is validated. Only the frontend changes — FastAPI/`schemas.py` stay as-is because the planned Streamlit UI will exercise the same API contract.
 - Hosting: Vercel for frontend (once on React); Render, Fly.io, Railway, or a small VM for backend
 - Data: SQLite locally at first, then Postgres if needed; Chroma, Qdrant, or FAISS for vectors
 
@@ -41,7 +41,7 @@ Tasks:
   2. Frontend calls `POST /recommend` with `{"prompt": "..."}`.
   3. Backend runs `run_playlist_graph()` and translates the result into a `RecommendResponse` (see `backend/api/schemas.py`).
   4. UI shows the playlist: title, artist, album/year, genre/tags, score. **No per-track "why"** — corrected from the original sketch below. `PlaylistBuilderAgent` only produces a playlist-level `rationale`/`energy_arc`, not a per-track explanation, so there is nothing to show per track beyond score.
-  5. Optional debug panel shows parsed intent, planner weights, retrieval counts, and critic result (critic result will be `null` until Phase 5 wires `CriticAgent` into the graph runner).
+  5. Optional debug panel shows parsed intent, planner weights, retrieval counts, and critic result and builder fallback status. The critic is now wired into the runner; rejected playlists produce an error response instead of result cards.
 - [x] Decide what counts as MVP done (confirmed):
   - 10–20 track playlist (matches `PlaylistPlan.playlist_size`, default 20, planner range 5–50)
   - No playback required
@@ -57,7 +57,7 @@ Deliverables:
 
 ## Phase 1: Backend MVP
 
-**Status: Implemented and partially verified; live `/recommend` still has an LLM-output blocker.** See `docs/roadmap.md` Known Issues / Next Priorities for the exact blocker.
+**Status: Backend implementation and focused offline verification complete; successful live acceptance remains pending.** The selected suite passed 85 tests. Latest live requests failed with Groq token-per-minute 429 errors (surfaced as API 502), not JSON parsing errors. Frontend development can proceed with these limitations recorded. See [testing and troubleshooting](testing.md).
 
 Goal: expose the existing LangGraph pipeline through a clean API.
 
@@ -79,12 +79,12 @@ Open issue: `_to_playlist_track()` does **not** yet backfill missing `title`/`ar
 
 Startup/subset configuration is fixed for the current repo layout: `.env` and `.env.example` point to `DATABASE_URL=sqlite:///database/music_relational.db` and `CHROMA_PERSIST_DIRECTORY=database/chroma_db`, matching the files that exist under `echoagent/database/`. `main.py` now explicitly loads the repo `.env` file. Verified in `echoagent-env`: `GROQ_API_KEY` is present, both dataset paths resolve, and `backend.api.main:app` imports cleanly.
 
-The `GROQ_MODEL` default bug (was `"gpt-oss-120b"`, an invalid Groq model ID) is fixed — `main.py` now defaults to `"openai/gpt-oss-120b"`. `/recommend` has now been exercised via a real HTTP request: the request reaches the LangGraph pipeline and loads data, but live completion is still blocked by the final LLM playlist-selection step returning/triggering invalid JSON behavior. A fallback to ranked candidates was added in `build_playlist_node()` so this should be re-tested after restarting Uvicorn.
+The API defaults to `GROQ_MODEL=openai/gpt-oss-120b`. JSON reliability changes are implemented and tested offline. The latest live runs with `GROQ_MAX_TOKENS=4096` reached the planner and builder but exceeded the account's reported 8,000 TPM limit: 5,836 used + 2,492 requested, and 4,329 used + 4,015 requested. Groq suggested waiting about 2.5 seconds. Restarting Uvicorn does not reset quota. The token setting is a per-call completion ceiling, not a workflow allowance. These logs do not establish a JSON regression or a successful accepted playlist; details are in [the testing guide](testing.md).
 
 Deliverables:
 
-- [ ] `POST /recommend` works locally — implemented and exercised via curl; currently reaches the graph but still needs a clean successful response after the playlist-builder JSON/fallback changes are re-tested.
-- [x] `tests/test_api.py` has real API tests — covers `/health`, `/recommend` success mapping/debug output, empty playlist `404`, prompt parse `422`, and request validation `422` with graph/LLM dependencies mocked.
+- [ ] Verify a fully accepted live `/recommend` response on the latest code — requests reach the graph, but the latest attempts were blocked by Groq quota.
+- [x] API contract tests and real-graph integration tests — acceptance, replanning feedback, exhausted rejection, empty results, JSON repair, provider failures, and fallback visibility. The focused suite passed 85 tests; external I/O is scripted.
 - [x] Backend can start with the current subset config — `.env` points to `database/music_relational.db` and `database/chroma_db`; `/health` passes and the live `/recommend` request reaches the graph/data-loading path. Full successful `/recommend` response remains open under the deliverable above.
 
 ### JSON reliability and offline integration verification
@@ -95,9 +95,11 @@ Deliverables:
 - INFO logs from `backend.agents.json_output` include agent, attempt, model, finish reason, and available token usage. Repair warnings include agent, attempt, and error type. Configure that logger at INFO to inspect completion diagnostics. Raw prompts and responses are not logged by these diagnostics.
 - `tests/test_json_reliability.py` exercises the real LLM client response handling and the API-to-LangGraph path, scripting only external model transport and retrieval data. It covers acceptance, feedback-driven replanning, final rejection, empty results, bounded retries, and fallback visibility.
 - Run offline checks with `python -m pytest tests/test_json_reliability.py tests/test_api.py tests/test_playlist_builder.py tests/test_candidate_fuser.py tests/test_reranker.py -q`.
-- Live Groq/database smoke testing remains a separate, pending step. Exclusion enforcement and metadata enrichment remain deferred.
+- Successful live Groq/database acceptance remains pending: the latest attempts hit quota errors. Application-level quota backoff, per-agent token budgets, strict exclusion enforcement, and metadata enrichment remain deferred by agreement.
 
 ## Phase 2: Frontend MVP
+
+**Status: Next active product milestone; not skipped.** The deferred backend improvements are not prerequisites for starting the UI.
 
 Goal: build a simple but polished web UI.
 
@@ -108,6 +110,7 @@ Screens:
   - generate button
   - loading state
   - playlist result list
+  - error display for structured critic-rejection details and string-valued errors, including current API 502 responses for upstream Groq 429
 - Track result cards/table:
   - title
   - artist
@@ -119,6 +122,7 @@ Screens:
   - planner weights
   - retrieval counts
   - critic result
+  - builder fallback used/reason
 - Saved examples:
   - "late-night rainy city drive"
   - "warm nostalgic indie autumn walk"
@@ -240,28 +244,19 @@ Deliverables:
 
 ## Phase 5: Critic And Quality Layer
 
-Goal: make the agentic layer visible and useful.
+**Status: Core critic integration completed ahead of the original phase order; UI visibility and additional guardrails remain.**
 
-Tasks:
+- [x] Supply `CriticAgent` in graph state (defaulting to the planner's LLM client).
+- [x] Ask the critic to evaluate exclusions, artist repetition, genre concentration, and prompt fit. These are model judgments, not deterministic guarantees.
+- [x] Feed the previous plan and critic feedback into replanning, with at most two replans by default.
+- [x] Withhold finally rejected playlists from API success responses; return structured HTTP 422.
+- [x] Test acceptance, rejection, feedback propagation, retry limits, and fallback review through the real graph with external I/O fixtures.
+- [x] Validate unique selected track IDs and use a pool large enough for the requested size; handle insufficient/empty pools.
+- [ ] Add deterministic exclusion guardrails — explicitly deferred.
+- [ ] Enforce deterministic max-artist repeats — remains future quality work.
+- [ ] Show critic outcomes and builder fallback status in the frontend.
 
-- Wire `CriticAgent` into graph state.
-- Let critic reject playlists for:
-  - exclusion violations
-  - repeated artists
-  - genre collapse
-  - mismatch with prompt
-- Feed critic suggestions back into planner.
-- Add deterministic guardrails before/after critic:
-  - no excluded artists
-  - no duplicate tracks
-  - max artist repeats
-- Show critic result in frontend debug drawer.
-
-Deliverables:
-
-- Critic participates in graph execution.
-- Critic tests.
-- Visible quality trace in UI.
+Live accepted output on the latest code remains unverified because the latest provider calls hit quota. See [testing guide](testing.md).
 
 ## Phase 6: Deployment
 
@@ -363,7 +358,7 @@ Recommended processing workspace:
 2. Web UI on current subset.
 3. Full-data processing pipeline.
 4. Swap app to full dataset.
-5. Critic + quality loop.
+5. Remaining quality guardrails and UI trace (core critic loop is already implemented).
 6. Deploy public demo.
 7. Spotify export / monetization experiments.
 
