@@ -26,11 +26,14 @@ cp .env.example .env
 # 3. Start the backend API
 uvicorn backend.api.main:app --reload --port 8000
 
-# 4. Sanity check
+# 4. Start the Streamlit frontend in another terminal
+streamlit run frontend/app.py
+
+# 5. Sanity check
 curl http://localhost:8000/health
 ```
 
-The next product milestone is a Streamlit frontend (`streamlit run frontend/app.py`, once built) calling FastAPI over HTTP. The backend, critic loop, JSON repairs, and offline graph/API tests are implemented. A successful live accepted playlist on the latest code remains unverified: recent calls hit Groq token-per-minute limits.
+The Streamlit frontend calls FastAPI over HTTP. By default it uses `http://localhost:8000`; set `FRONTEND_BACKEND_URL` to point it at a different backend. The backend, critic loop, JSON repairs, and offline graph/API tests are implemented. A successful live accepted playlist on the latest code remains unverified: recent calls hit Groq token-per-minute limits.
 
 Test the API from another terminal:
 

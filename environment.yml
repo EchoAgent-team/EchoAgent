@@ -23,4 +23,6 @@ dependencies:
       - "tqdm>=4.65.0"
       - "fastapi>=0.110.0"
       - "uvicorn>=0.30.0"
+      - "streamlit>=1.36.0"
+      - "requests>=2.31.0"
       - "pytest>=7.0.0"
