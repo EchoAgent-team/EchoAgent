@@ -28,7 +28,7 @@ The current relational store uses SQLite. The SQLAlchemy models are written to b
 
 ## UI / Interactive Demo — active next milestone
 
-The Streamlit MVP is Phase 2 of [the web-app plan](web_app_full_data_plan.md), not a deferred feature. It will call `/recommend` over HTTP. Playback, export, and a later React UI remain separate future work.
+The Streamlit MVP is Phase 2 of [the web-app plan](web_app_full_data_plan.md), not a deferred feature. A first build exists (`frontend/app.py`, 2026-09-28) and calls `/recommend` over HTTP; live integration against a real accepted response is still unverified — see Phase 2 status in that plan. Playback, export, and a later React UI remain separate future work.
 
 ## End-to-End Playback: Prompt → Hear Music
 

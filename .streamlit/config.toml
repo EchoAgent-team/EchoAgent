@@ -1,0 +1,33 @@
+[theme]
+baseRadius = "large"
+buttonRadius = "full"
+showWidgetBorder = true
+linkUnderline = false
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap"
+headingFontSizes = ["44px", "26px", "20px", "17px", "15px", "13px"]
+headingFontWeights = [700, 700, 600, 600, 500, 500]
+
+[theme.dark]
+primaryColor = "#A78BFA"
+backgroundColor = "#0B0B12"
+secondaryBackgroundColor = "#17161F"
+textColor = "#F4F3F7"
+borderColor = "#2C2A38"
+greenColor = "#34D399"
+blueColor = "#22D3EE"
+violetColor = "#A78BFA"
+grayColor = "#9C9AA8"
+chartCategoricalColors = ["#A78BFA", "#22D3EE", "#F472B6", "#34D399", "#FBBF24", "#60A5FA", "#F87171"]
+
+[theme.light]
+primaryColor = "#7C3AED"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F2FA"
+textColor = "#181521"
+borderColor = "#E6E1F5"
+greenColor = "#059669"
+blueColor = "#0891B2"
+violetColor = "#7C3AED"
+grayColor = "#6B6879"
+chartCategoricalColors = ["#7C3AED", "#0891B2", "#DB2777", "#059669", "#D97706", "#2563EB", "#DC2626"]

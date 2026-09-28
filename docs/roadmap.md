@@ -27,7 +27,7 @@ Living status doc. Updated as work progresses. For deferred items see `docs/futu
 ### Remaining / Deferred
 
 - **Live acceptance**: the latest live requests failed at the planner and builder with Groq 429 quota errors, surfaced as API 502. A fully accepted live playlist on the latest code remains unverified.
-- **Frontend**: not implemented; the next product milestone is Streamlit calling FastAPI over HTTP.
+- **Frontend**: Phase 2 MVP built 2026-09-28 (`frontend/app.py`, `.streamlit/config.toml`) — prompt input, example-vibe chips, track cards with match-strength bars, debug drawer, native theme. Calls FastAPI over HTTP via `FRONTEND_BACKEND_URL`. Not yet exercised against a real accepted `/recommend` response; only checked with headless `AppTest` smoke runs and mocked data.
 - **Deferred by agreement**: application-level rate-limit backoff and per-agent budgets; strict exclusion filtering; metadata enrichment and cleanup. These are not completed fixes or immediate prerequisites for frontend work.
 
 ### Phase 1 — Backend MVP: implemented and partially verified
@@ -48,13 +48,14 @@ The API, critic integration, bounded JSON repair, rejection handling, and offlin
 - **Groq quota failures**: latest live runs with `GROQ_MAX_TOKENS=4096` exceeded the reported 8,000 TPM allowance (5,836 + 2,492 and 4,329 + 4,015). The API returns 502 for upstream 429. Restarting the server does not reset quota; rate-limit recovery remains deferred.
 - **Strict exclusions**: scoring penalties and critic instructions do not guarantee deterministic exclusion filtering. Enforcement is deferred.
 - **Model configuration**: the API default is `openai/gpt-oss-120b`, overridable with `GROQ_MODEL`. Model availability and account limits must be checked for the configured provider; no model choice guarantees valid output on every call.
+- **`echoagent-env` can drift below `environment.yml`'s floor versions.** Hit 2026-09-28: a stale `streamlit==1.8.0` (floor is `>=1.36.0`) crashed on import with a protobuf `TypeError: Descriptors cannot be created directly`. Fixing it (`pip install --upgrade streamlit`) pulled in `starlette>=0.46.0`, which then broke the then-installed `fastapi==0.115.9` (needs `starlette<0.46.0`) — `APIRouter()` failed with `unexpected keyword argument 'on_startup'`. Resolved by upgrading `fastapi` too (→0.141.1). If a teammate hits the protobuf error, check `pip check` for a starlette/fastapi mismatch before assuming it's protobuf alone.
 
 ---
 
 ## Next Priorities
 
-1. **Phase 2: Streamlit frontend MVP** — `frontend/app.py` calling `/recommend`; prompt input, loading state, results, examples, and a debug panel. Handle structured 422 rejection details and string-valued provider errors.
-2. **Complete live acceptance verification when quota permits** — use the testing guide; do not equate offline fixture coverage with a successful live run.
+1. **Complete live acceptance verification when quota permits** — use the testing guide; do not equate offline fixture coverage with a successful live run. This is the shared blocker for confirming both Phase 1 and the Phase 2 frontend actually work end-to-end.
+2. **Run the Phase 2 frontend against a live backend** — `frontend/app.py` has a working first build (prompt input, examples, results, debug panel; structured 422 and string-valued errors are already handled), but it has never rendered a real accepted playlist. Start `uvicorn` + `streamlit run frontend/app.py` together and click through it once quota allows.
 3. **Continue the full-dataset track** according to `web_app_full_data_plan.md`, without making full-data processing a prerequisite for the subset UI.
 
 Critic wiring and offline graph/API tests are completed, not future tasks. Metadata enrichment, exclusion enforcement, and rate-limit improvements remain parked in [future work](future.md).

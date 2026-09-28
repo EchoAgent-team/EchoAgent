@@ -99,7 +99,7 @@ Deliverables:
 
 ## Phase 2: Frontend MVP
 
-**Status: Next active product milestone; not skipped.** The deferred backend improvements are not prerequisites for starting the UI.
+**Status: First build complete (2026-09-28), live integration unverified.** `frontend/app.py` was built by the co-dev (commits `8f2bef1`, `c4e8388`) and then restyled in the same session (native `.streamlit/config.toml` theme — light/dark, violet accent, Material icons, pill buttons — plus one scoped CSS exception for a background glow, since gradients aren't expressible through theme tokens alone). It has prompt input, three example-vibe chips, track cards with match-strength bars, and a debug drawer. It has **not** been checked against a real accepted `/recommend` response — only headless `AppTest` smoke runs with mocked data and a manual browser look without the backend running. That verification is blocked on the same Groq-quota gap blocking Phase 1 live acceptance (see `docs/roadmap.md`).
 
 Goal: build a simple but polished web UI.
 
@@ -138,10 +138,10 @@ Frontend guidance:
 
 Deliverables:
 
-- Usable web UI
-- Mobile-friendly layout
-- Demo prompts
-- Frontend talks to local backend
+- [x] Usable web UI — `frontend/app.py`: prompt in, playlist out, matches the Phase 0 product flow.
+- [ ] Mobile-friendly layout — relies on Streamlit's default responsive column stacking; not manually verified on a phone or narrow viewport.
+- [x] Demo prompts — three example-vibe chips (`EXAMPLE_PROMPTS` in `frontend/app.py`).
+- [ ] Frontend talks to local backend — implemented (`FRONTEND_BACKEND_URL`, defaults to `http://localhost:8000`) but never exercised against a real accepted response; see Status above.
 
 ## Phase 3: Full MSD Processing Pipeline
 
@@ -254,7 +254,7 @@ Deliverables:
 - [x] Validate unique selected track IDs and use a pool large enough for the requested size; handle insufficient/empty pools.
 - [ ] Add deterministic exclusion guardrails — explicitly deferred.
 - [ ] Enforce deterministic max-artist repeats — remains future quality work.
-- [ ] Show critic outcomes and builder fallback status in the frontend.
+- [x] Show critic outcomes and builder fallback status in the frontend — `render_debug()` in `frontend/app.py` displays `critic_report`, `builder_fallback_used`, and `builder_fallback_reason` in the debug drawer. Untested against a real critic run (see Phase 2 status).
 
 Live accepted output on the latest code remains unverified because the latest provider calls hit quota. See [testing guide](testing.md).
 

@@ -182,8 +182,9 @@ What is implemented:
 - FastAPI `GET /health` and `POST /recommend`, including final-rejection handling.
 - JSON mode across all four agents, bounded repairs, completion diagnostics, and ranked-track fallback visibility.
 - Offline API and real-graph tests with scripted external I/O; focused suite: 85 passed.
+- Streamlit frontend MVP (`frontend/app.py`): prompt input, example-vibe chips, track cards with match-strength bars, debug drawer, native `.streamlit/config.toml` theme.
 
-Next: the Streamlit frontend MVP. Live acceptance verification remains pending under the current Groq quota; deferred backend work is tracked in [future work](docs/future.md).
+Next: verify both the backend and frontend against a real accepted `/recommend` response — neither has completed a successful live run yet under the current Groq quota. Deferred backend work is tracked in [future work](docs/future.md).
 
 ## 📁 Repository structure
 
@@ -205,6 +206,12 @@ EchoAgent/
 │   ├── roadmap.md              # Current status and next priorities
 │   └── specs/                  # Detailed interface specifications
 │
+├── frontend/                   # Streamlit frontend (Phase 2 MVP)
+│   └── app.py
+│
+├── .streamlit/                 # Native theme config for the frontend
+│   └── config.toml
+│
 ├── notebooks/                  # Jupyter notebooks for exploration and testing
 │
 └── tests/                      # Test suite
@@ -219,11 +226,11 @@ This structure reflects the current emphasis of the repository: prompt understan
 - ChromaDB plus sentence-transformer embeddings for semantic retrieval. 
 - Transformer-based LLM prompting for schema-constrained prompt parsing. 
 - LangGraph orchestrates the multi-step retrieval and playlist workflow.
-- FastAPI serves the backend; a Streamlit frontend is planned.
+- FastAPI serves the backend; a Streamlit frontend (`frontend/app.py`) covers the current API contract, including error and debug displays.
 
 ## 🛣️ Near-term roadmap
 
-- Build the Streamlit frontend against the current API contract, including error and debug displays.
+- Verify the Streamlit frontend and backend together against a real accepted `/recommend` response — neither has completed a successful live run yet.
 - Verify a fully accepted live playlist when provider quota permits.
 - Continue the full-dataset processing track independently of the subset UI.
 - Keep metadata enrichment, strict exclusion enforcement, and rate-limit improvements deferred as agreed.
@@ -235,4 +242,4 @@ Post-MVP:
 
 ## Notes
 
-The backend hybrid retrieval and agent workflow is implemented and tested offline. The frontend is next; live acceptance and the explicitly deferred improvements remain open.
+The backend hybrid retrieval and agent workflow is implemented and tested offline. A Streamlit frontend MVP exists (`frontend/app.py`); live acceptance and frontend↔backend integration verification, plus the explicitly deferred improvements, remain open.

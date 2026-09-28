@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from html import escape
+import re
 from typing import Any
 
 import requests
@@ -11,80 +11,52 @@ import streamlit as st
 
 BACKEND_URL = os.getenv("FRONTEND_BACKEND_URL", "http://localhost:8000").rstrip("/")
 EXAMPLE_PROMPTS = [
-    "late-night rainy city drive",
-    "warm nostalgic indie autumn walk",
-    "high-energy gym rhythm, no sad songs",
+    (":material/nights_stay:", "late-night rainy city drive"),
+    (":material/park:", "warm nostalgic indie autumn walk"),
+    (":material/bolt:", "high-energy gym rhythm, no sad songs"),
 ]
+
+_MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|<>~])")
+
+
+def escape_md(text: str) -> str:
+    return _MD_SPECIAL.sub(r"\\\1", text)
+
+
+def render_background() -> None:
+    theme_type = getattr(st.context.theme, "type", "light")
+    if theme_type == "dark":
+        glow = (
+            "radial-gradient(640px circle at 10% -8%, rgba(167,139,250,0.22), transparent 62%),"
+            "radial-gradient(560px circle at 108% 6%, rgba(34,211,238,0.14), transparent 60%),"
+            "radial-gradient(680px circle at 50% 118%, rgba(244,114,182,0.10), transparent 60%)"
+        )
+    else:
+        glow = (
+            "radial-gradient(640px circle at 10% -8%, rgba(124,58,237,0.10), transparent 62%),"
+            "radial-gradient(560px circle at 108% 6%, rgba(8,145,178,0.08), transparent 60%),"
+            "radial-gradient(680px circle at 50% 118%, rgba(219,39,119,0.06), transparent 60%)"
+        )
+
+    st.html(
+        f"""
+        <style>
+        .stApp {{
+            background-image: {glow};
+            background-attachment: fixed;
+        }}
+        </style>
+        """
+    )
 
 
 def page_setup() -> None:
     st.set_page_config(
         page_title="EchoAgent",
+        page_icon=":material/queue_music:",
         layout="centered",
-        initial_sidebar_state="collapsed",
     )
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            color-scheme: light dark;
-        }
-        .block-container {
-            max-width: 920px;
-            padding-top: 2.5rem;
-            padding-bottom: 3rem;
-        }
-        .echo-subtitle {
-            margin-top: -0.75rem;
-            color: rgba(128, 128, 128, 0.95);
-            font-size: 1.05rem;
-        }
-        .track-card {
-            border: 1px solid rgba(128, 128, 128, 0.22);
-            border-radius: 8px;
-            padding: 0.85rem 0.95rem;
-            margin-bottom: 0.65rem;
-            background: rgba(128, 128, 128, 0.06);
-        }
-        .track-title-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 0.75rem;
-            align-items: baseline;
-        }
-        .track-title {
-            font-weight: 700;
-            font-size: 1rem;
-            line-height: 1.35;
-        }
-        .track-artist {
-            color: rgba(128, 128, 128, 0.98);
-            margin-top: 0.15rem;
-        }
-        .track-meta {
-            color: rgba(128, 128, 128, 0.9);
-            font-size: 0.88rem;
-            margin-top: 0.45rem;
-        }
-        .match-badge {
-            white-space: nowrap;
-            border-radius: 999px;
-            padding: 0.18rem 0.55rem;
-            border: 1px solid rgba(128, 128, 128, 0.28);
-            font-size: 0.78rem;
-            font-weight: 650;
-        }
-        .muted {
-            color: rgba(128, 128, 128, 0.88);
-            font-size: 0.82rem;
-        }
-        div[data-testid="stHorizontalBlock"] button {
-            width: 100%;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    render_background()
 
 
 def recommend(prompt: str) -> dict[str, Any]:
@@ -134,14 +106,14 @@ def format_error(status_code: int, payload: dict[str, Any]) -> str:
     return f"EchoAgent could not generate a playlist. {message}"
 
 
-def match_badge(score: float | int | None) -> str:
+def match_badge(score: float | int | None) -> tuple[str, str]:
     if score is None:
-        return "Match"
+        return "Match", "gray"
     if score >= 0.78:
-        return "Strong match"
+        return "Strong match", "green"
     if score >= 0.55:
-        return "Good match"
-    return "Wildcard"
+        return "Good match", "blue"
+    return "Wildcard", "gray"
 
 
 def format_track_name(track: dict[str, Any]) -> tuple[str, str]:
@@ -156,7 +128,7 @@ def format_track_name(track: dict[str, Any]) -> tuple[str, str]:
 
 
 def compact(values: list[Any]) -> str:
-    return " | ".join(str(value) for value in values if value not in (None, "", []))
+    return " · ".join(str(value) for value in values if value not in (None, "", []))
 
 
 def render_track(track: dict[str, Any], index: int) -> None:
@@ -168,35 +140,22 @@ def render_track(track: dict[str, Any], index: int) -> None:
     tags = track.get("tags") or []
     tag_text = ", ".join(tags[:4])
     meta = compact([album, year, genre, tag_text])
-    raw_score = f"{score:.3f}"
-    safe_title = escape(str(title))
-    safe_artist = escape(str(artist))
-    safe_meta = escape(meta if meta else "No album, year, or genre metadata")
-    safe_badge = escape(match_badge(score))
+    label, color = match_badge(score)
 
-    st.markdown(
-        f"""
-        <div class="track-card">
-          <div class="track-title-row">
-            <div>
-              <div class="track-title">{index}. {safe_title}</div>
-              <div class="track-artist">{safe_artist}</div>
-            </div>
-            <div class="match-badge">{safe_badge}</div>
-          </div>
-          <div class="track-meta">{safe_meta}</div>
-          <div class="muted">score {raw_score}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with st.container(border=True):
+        with st.container(horizontal=True, horizontal_alignment="distribute"):
+            st.markdown(f"**{index}. {escape_md(str(title))}**")
+            st.badge(label, color=color)
+        st.caption(escape_md(str(artist)))
+        st.caption(meta if meta else "No album, year, or genre metadata")
+        st.progress(min(max(score, 0.0), 1.0), text=f"Match strength · {score:.3f}")
 
 
 def render_debug(debug: dict[str, Any] | None) -> None:
     if not debug:
         return
 
-    with st.expander("Debug", expanded=False):
+    with st.expander("Debug", icon=":material/bug_report:", expanded=False):
         counts = {
             "relational candidates": debug.get("relational_candidate_count"),
             "vector candidates": debug.get("vector_candidate_count"),
@@ -205,21 +164,21 @@ def render_debug(debug: dict[str, Any] | None) -> None:
             "builder fallback used": debug.get("builder_fallback_used"),
             "builder fallback reason": debug.get("builder_fallback_reason"),
         }
-        st.write("Retrieval and build status")
+        st.markdown("**Retrieval and build status**")
         st.json(counts)
-        st.write("Parsed intent")
+        st.markdown("**Parsed intent**")
         st.json(debug.get("intent") or {})
-        st.write("Planner output")
+        st.markdown("**Planner output**")
         st.json(debug.get("plan") or {})
-        st.write("Critic report")
+        st.markdown("**Critic report**")
         st.json(debug.get("critic_report") or {})
 
 
 def main() -> None:
     page_setup()
 
-    st.title("EchoAgent")
-    st.markdown('<p class="echo-subtitle">Describe the mix you have in mind.</p>', unsafe_allow_html=True)
+    st.title("EchoAgent", icon=":material/graphic_eq:")
+    st.markdown("Type a vibe. Get a playlist.")
 
     if "prompt" not in st.session_state:
         st.session_state.prompt = ""
@@ -228,24 +187,32 @@ def main() -> None:
     if "error" not in st.session_state:
         st.session_state.error = None
 
-    cols = st.columns(len(EXAMPLE_PROMPTS))
-    for col, example in zip(cols, EXAMPLE_PROMPTS):
-        with col:
-            if st.button(example, use_container_width=True):
-                st.session_state.prompt = example
-                st.session_state.result = None
-                st.session_state.error = None
-                st.rerun()
+    st.space("small")
 
-    prompt = st.text_area(
-        "Prompt",
-        key="prompt",
-        placeholder="late-night rainy city drive, introspective but not depressing",
-        height=110,
-        label_visibility="collapsed",
-    )
+    with st.container(border=True):
+        cols = st.columns(len(EXAMPLE_PROMPTS))
+        for col, (icon, example) in zip(cols, EXAMPLE_PROMPTS):
+            with col:
+                if st.button(example, icon=icon, width="stretch"):
+                    st.session_state.prompt = example
+                    st.session_state.result = None
+                    st.session_state.error = None
+                    st.rerun()
 
-    generate = st.button("Generate playlist", type="primary", use_container_width=True)
+        prompt = st.text_area(
+            "Prompt",
+            key="prompt",
+            placeholder="late-night rainy city drive, introspective but not depressing",
+            height=110,
+            label_visibility="collapsed",
+        )
+
+        generate = st.button(
+            "Generate playlist",
+            type="primary",
+            icon=":material/auto_awesome:",
+            width="stretch",
+        )
 
     if generate:
         clean_prompt = prompt.strip()
@@ -269,12 +236,12 @@ def main() -> None:
                     st.session_state.error = str(exc)
 
     if st.session_state.error:
-        st.error(st.session_state.error)
+        st.error(st.session_state.error, icon=":material/error:")
 
     result = st.session_state.result
     if result:
         playlist = result.get("playlist") or []
-        st.subheader("Playlist")
+        st.subheader("Playlist", icon=":material/queue_music:")
         st.caption(f"{len(playlist)} tracks for: {result.get('prompt', prompt)}")
 
         for index, track in enumerate(playlist, start=1):
