@@ -228,14 +228,6 @@ def main() -> None:
     if "error" not in st.session_state:
         st.session_state.error = None
 
-    prompt = st.text_area(
-        "Prompt",
-        key="prompt",
-        placeholder="late-night rainy city drive, introspective but not depressing",
-        height=110,
-        label_visibility="collapsed",
-    )
-
     cols = st.columns(len(EXAMPLE_PROMPTS))
     for col, example in zip(cols, EXAMPLE_PROMPTS):
         with col:
@@ -244,6 +236,14 @@ def main() -> None:
                 st.session_state.result = None
                 st.session_state.error = None
                 st.rerun()
+
+    prompt = st.text_area(
+        "Prompt",
+        key="prompt",
+        placeholder="late-night rainy city drive, introspective but not depressing",
+        height=110,
+        label_visibility="collapsed",
+    )
 
     generate = st.button("Generate playlist", type="primary", use_container_width=True)
 
