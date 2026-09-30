@@ -16,7 +16,8 @@ from backend.agents.critic_agent import CriticAgent
 from backend.agents.json_output import JSONOutputError
 from backend.agents.planner_agent import PlannerAgent, PlaylistPlan, RetrievalLimits
 from backend.agents.playlist_builder import PlaylistBuilderAgent
-from backend.agents.prompt_parser import LLMClient, PromptParser
+from backend.agents import prompt_parser
+from backend.agents.prompt_parser import RATE_LIMIT_ATTEMPTS, LLMClient, PromptParser
 from backend.agents.vibe_intent import VibeIntent
 from backend.api.routes import recommend
 
@@ -28,6 +29,11 @@ TRACKS = [{"track_id": f"TR{i}", "title": f"Track {i}", "artist_name": f"Artist 
 BUILDER = {"selected_track_ids": [t["track_id"] for t in TRACKS], "energy_arc": "Gentle throughout.", "rationale": "Fits rain."}
 ACCEPT = {"accept": True, "reason": "Matches the request.", "suggested_adjustments": {}}
 REJECT = {"accept": False, "reason": "Too repetitive.", "suggested_adjustments": {"artist_repeat_penalty": 0.8}}
+
+
+@pytest.fixture(autouse=True)
+def no_rate_limit_sleep(monkeypatch):
+    monkeypatch.setattr(prompt_parser.time, "sleep", lambda _: None)
 
 
 def completion(payload, finish_reason="stop"):
@@ -103,10 +109,20 @@ def test_repairs_stop_after_three_attempts(agent):
 @pytest.mark.parametrize("agent", VALID)
 def test_rate_limit_is_not_a_json_repair(agent):
     error = provider_error(RateLimitError, 429, "rate_limit_exceeded")
-    client = scripted_client([error])
+    client = scripted_client([error] * RATE_LIMIT_ATTEMPTS)
     with pytest.raises(RateLimitError):
         invoke_agent(agent, client)
-    assert len(calls(client)) == 1
+    assert len(calls(client)) == RATE_LIMIT_ATTEMPTS
+    assert all("INVALID" not in c.kwargs["messages"][0]["content"] for c in calls(client))
+
+
+@pytest.mark.parametrize("agent", VALID)
+def test_rate_limit_retries_then_succeeds(agent):
+    error = provider_error(RateLimitError, 429, "rate_limit_exceeded")
+    client = scripted_client([error, completion(VALID[agent])])
+    invoke_agent(agent, client)
+    assert len(calls(client)) == 2
+    assert all("INVALID" not in c.kwargs["messages"][0]["content"] for c in calls(client))
 
 
 def test_diagnostics_include_context_and_usage_without_content(caplog):
@@ -164,6 +180,7 @@ def graph_api(monkeypatch):
             recommend.get_llm_client: lambda: llm,
             recommend.get_planner_agent: lambda: PlannerAgent(llm),
             recommend.get_playlist_builder_agent: lambda: PlaylistBuilderAgent(llm),
+            recommend.get_critic_agent: lambda: CriticAgent(llm),
             recommend.get_prompt_schema_path: lambda: SCHEMA,
             recommend.get_database_url: lambda: None,
             recommend.get_chroma_persist_directory: lambda: None,
@@ -240,11 +257,11 @@ def test_real_graph_fallback_flag_resets_after_successful_retry(graph_api):
 
 
 def test_real_graph_provider_error_does_not_become_builder_fallback(graph_api):
-    sequence = [completion(INTENT), completion(PLAN_JSON), provider_error(RateLimitError, 429, "rate_limit_exceeded")]
+    sequence = [completion(INTENT), completion(PLAN_JSON)] + [provider_error(RateLimitError, 429, "rate_limit_exceeded")] * RATE_LIMIT_ATTEMPTS
     response, llm, _ = graph_api(sequence)
-    assert response.status_code == 502, response.text
-    assert "LLM request failed" in response.json()["detail"]
-    assert len(calls(llm)) == 3
+    assert response.status_code == 429, response.text
+    assert "rate limit" in response.json()["detail"].lower()
+    assert len(calls(llm)) == 2 + RATE_LIMIT_ATTEMPTS
 
 
 @pytest.mark.parametrize("prefix, expected", [([], 422), ([INTENT], 502), ([INTENT, PLAN_JSON, BUILDER], 502)])

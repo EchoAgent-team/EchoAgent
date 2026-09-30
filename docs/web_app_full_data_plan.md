@@ -79,7 +79,9 @@ Open issue: `_to_playlist_track()` does **not** yet backfill missing `title`/`ar
 
 Startup/subset configuration is fixed for the current repo layout: `.env` and `.env.example` point to `DATABASE_URL=sqlite:///database/music_relational.db` and `CHROMA_PERSIST_DIRECTORY=database/chroma_db`, matching the files that exist under `echoagent/database/`. `main.py` now explicitly loads the repo `.env` file. Verified in `echoagent-env`: `GROQ_API_KEY` is present, both dataset paths resolve, and `backend.api.main:app` imports cleanly.
 
-The API defaults to `GROQ_MODEL=openai/gpt-oss-120b`. JSON reliability changes are implemented and tested offline. The latest live runs with `GROQ_MAX_TOKENS=4096` reached the planner and builder but exceeded the account's reported 8,000 TPM limit: 5,836 used + 2,492 requested, and 4,329 used + 4,015 requested. Groq suggested waiting about 2.5 seconds. Restarting Uvicorn does not reset quota. The token setting is a per-call completion ceiling, not a workflow allowance. These logs do not establish a JSON regression or a successful accepted playlist; details are in [the testing guide](testing.md).
+**Update 2026-09-30:** the quota problem below was mitigated (bounded 429 retry, smaller prompts, `reasoning_effort=low`, parser/planner on `openai/gpt-oss-20b` via `GROQ_MODEL_LIGHT`, builder/critic on `GROQ_MODEL=openai/gpt-oss-120b`); a live run then completed with no 429s or JSON failures, but the critic rejected all three passes, so acceptance is still unverified. Decisions and reasons are in [architecture](architecture.md#rate-limits-and-model-allocation). Original observations follow.
+
+The API defaulted to `GROQ_MODEL=openai/gpt-oss-120b` for every agent. JSON reliability changes are implemented and tested offline. The latest live runs with `GROQ_MAX_TOKENS=4096` reached the planner and builder but exceeded the account's reported 8,000 TPM limit: 5,836 used + 2,492 requested, and 4,329 used + 4,015 requested. Groq suggested waiting about 2.5 seconds. Restarting Uvicorn does not reset quota. The token setting is a per-call completion ceiling, not a workflow allowance. These logs do not establish a JSON regression or a successful accepted playlist; details are in [the testing guide](testing.md).
 
 Deliverables:
 
@@ -90,7 +92,7 @@ Deliverables:
 ### JSON reliability and offline integration verification
 
 - Parser, planner, builder, and critic request JSON mode on every attempt. Provider JSON-validation failures, empty content, truncation, malformed JSON, and invalid fields enter the agent's bounded repair loop (three attempts by default). JSON mode is never disabled for a repair.
-- Provider errors such as HTTP 429 propagate through the existing API error mapping; they do not trigger JSON repairs or the builder's ranked-track fallback. Rate-limit backoff and per-agent budget changes remain deferred.
+- Provider errors such as HTTP 429 propagate through the existing API error mapping; they do not trigger JSON repairs or the builder's ranked-track fallback. As of 2026-09-30 `LLMClient` retries 429s up to 3 times before the API returns 429; per-agent budgets remain deferred.
 - Builder validation exhaustion retains the ranked-track fallback for critic review. `debug.builder_fallback_used` and `debug.builder_fallback_reason` describe the final builder pass and reset when a later pass succeeds.
 - INFO logs from `backend.agents.json_output` include agent, attempt, model, finish reason, and available token usage. Repair warnings include agent, attempt, and error type. Configure that logger at INFO to inspect completion diagnostics. Raw prompts and responses are not logged by these diagnostics.
 - `tests/test_json_reliability.py` exercises the real LLM client response handling and the API-to-LangGraph path, scripting only external model transport and retrieval data. It covers acceptance, feedback-driven replanning, final rejection, empty results, bounded retries, and fallback visibility.
@@ -110,7 +112,7 @@ Screens:
   - generate button
   - loading state
   - playlist result list
-  - error display for structured critic-rejection details and string-valued errors, including current API 502 responses for upstream Groq 429
+  - error display for structured critic-rejection details and string-valued errors, including API 429 (and legacy 502) responses for upstream Groq rate limits
 - Track result cards/table:
   - title
   - artist

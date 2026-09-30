@@ -59,6 +59,12 @@ class DummyPlaylistBuilderAgent:
     pass
 
 
+class DummyCriticAgent:
+    """Placeholder dependency; run_playlist_graph is mocked."""
+
+    pass
+
+
 @pytest.fixture
 def client() -> TestClient:
     """Provide a TestClient with recommendation dependencies overridden."""
@@ -68,6 +74,7 @@ def client() -> TestClient:
     app.dependency_overrides[recommend_route.get_playlist_builder_agent] = (
         lambda: DummyPlaylistBuilderAgent()
     )
+    app.dependency_overrides[recommend_route.get_critic_agent] = lambda: DummyCriticAgent()
     app.dependency_overrides[recommend_route.get_prompt_schema_path] = (
         lambda: "backend/agents/prompt_schema.json"
     )

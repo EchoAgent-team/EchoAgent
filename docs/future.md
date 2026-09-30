@@ -84,7 +84,8 @@ API contract tests and real-graph fixture tests, including critic acceptance/rej
 
 Still open:
 
-- Successful live Groq/database acceptance on the latest code (latest runs hit provider quota).
+- Successful live Groq/database acceptance on the latest code (as of 2026-09-30 the run completes without quota errors, but the critic rejects the test prompt).
+- Confirm the per-model TPM bucket assumption and evaluate `gpt-oss-20b` quality for parser/planner.
 - Retrieval correctness baselines using `docs/specs/02_prompt_taxonomy.md`.
 - Full-dataset coverage and latency evaluation.
 
@@ -92,6 +93,6 @@ Still open:
 
 User decision reaffirmed 2026-09-23; do not treat these as prerequisites for frontend development:
 
-- **Groq quota handling:** application-level bounded 429 backoff and smaller per-agent token budgets. Current upstream 429 failures become API 502. JSON repairs do not solve token-per-minute limits.
+- **Groq quota handling:** bounded 429 retry and a light/heavy model split shipped 2026-09-30 (see [architecture](architecture.md#rate-limits-and-model-allocation)). Still open: explicit per-agent token budgets, moving to Groq's Dev Tier, and removing the temporary `POOL_SIZE`/playlist-size caps of 5.
 - **Strict exclusions:** deterministic removal of excluded artists/genres. Existing score penalties and critic instructions are not a guarantee.
 - **Metadata enrichment and cleanup:** look up missing vector-only track metadata by `track_id` in the relational DB, and normalize byte-representation strings and malformed tags. Previously documented and intentionally postponed; it is unresolved, not fixed. This local-data repair is separate from the optional external enrichment agent above.

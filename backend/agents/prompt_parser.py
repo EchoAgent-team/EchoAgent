@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from backend.agents.json_output import JSONOutputError, check_completion, generate_json, log_repair
 
-import json, re
+import json, logging, re, time
 from typing import Optional
 from .vibe_intent import VibeIntent
+
+logger = logging.getLogger(__name__)
+RATE_LIMIT_ATTEMPTS = 3
+RATE_LIMIT_MAX_WAIT_SECONDS = 20.0
 
 class PromptParser:
     """
@@ -176,6 +180,8 @@ class PromptParser:
         return intent
 
 class LLMClient:
+    reasoning_effort: Optional[str] = None
+
     def __init__(self, model_name,
                  device, api_key,
                  endpoint, temperature,
@@ -183,7 +189,8 @@ class LLMClient:
                  provider: Optional[str] = None,
                  top_p: float = 1.0,
                  stream: bool = False,
-                 compound_custom: Optional[dict] = None):
+                 compound_custom: Optional[dict] = None,
+                 reasoning_effort: Optional[str] = None):
         self.model_name = model_name
         self.device = device
         self.api_key = api_key
@@ -194,6 +201,7 @@ class LLMClient:
         self.top_p = top_p
         self.stream = stream
         self.compound_custom = compound_custom
+        self.reasoning_effort = reasoning_effort
 
         if provider is None:
             provider = "groq" if api_key is not None else "local"
@@ -220,6 +228,36 @@ class LLMClient:
         else:
             raise ValueError("provider must be one of: None, 'hf_api', 'local', 'groq'")
 
+    def _create_with_rate_limit_retry(self, request_kwargs, json_mode: bool):
+        from groq import RateLimitError
+
+        for attempt in range(1, RATE_LIMIT_ATTEMPTS + 1):
+            try:
+                return self._api_client.chat.completions.create(**request_kwargs)
+            except RateLimitError as exc:
+                if attempt == RATE_LIMIT_ATTEMPTS:
+                    raise
+                wait = self._retry_after_seconds(exc, default=2.0 * attempt)
+                logger.warning("Groq rate limit hit; retrying in %.1fs (attempt %s)", wait, attempt)
+                time.sleep(wait)
+            except Exception as exc:
+                body = getattr(exc, "body", None)
+                error = body.get("error", body) if isinstance(body, dict) else {}
+                code = error.get("code") if isinstance(error, dict) else None
+                if json_mode and code == "json_validate_failed":
+                    check_completion(None, "json_validate_failed", None, self.model_name, False)
+                    raise JSONOutputError("Provider rejected generated JSON (json_validate_failed).") from exc
+                raise
+
+    @staticmethod
+    def _retry_after_seconds(exc, default: float) -> float:
+        headers = getattr(getattr(exc, "response", None), "headers", None)
+        try:
+            wait = float(headers.get("retry-after")) if headers else default
+        except (TypeError, ValueError):
+            wait = default
+        return min(max(wait, 0.5), RATE_LIMIT_MAX_WAIT_SECONDS)
+
     def generate(self, system_prompt, user_input, json_mode: bool = False):
         messages = [
             {"role": "system", "content": system_prompt},
@@ -239,16 +277,9 @@ class LLMClient:
             }
             if json_mode:
                 request_kwargs["response_format"] = {"type": "json_object"}
-            try:
-                response = self._api_client.chat.completions.create(**request_kwargs)
-            except Exception as exc:
-                body = getattr(exc, "body", None)
-                error = body.get("error", body) if isinstance(body, dict) else {}
-                code = error.get("code") if isinstance(error, dict) else None
-                if json_mode and code == "json_validate_failed":
-                    check_completion(None, "json_validate_failed", None, self.model_name, False)
-                    raise JSONOutputError("Provider rejected generated JSON (json_validate_failed).") from exc
-                raise
+            if self.reasoning_effort and self.model_name.startswith("openai/gpt-oss"):
+                request_kwargs["reasoning_effort"] = self.reasoning_effort
+            response = self._create_with_rate_limit_retry(request_kwargs, json_mode)
             if self.stream:
                 parts = []
                 finish_reason = None

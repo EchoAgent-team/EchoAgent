@@ -91,7 +91,7 @@ def format_error(status_code: int, payload: dict[str, Any]) -> str:
     message = detail if isinstance(detail, str) else json.dumps(detail, indent=2)
     lowered = message.lower()
 
-    if status_code == 502 and ("429" in lowered or "rate" in lowered or "quota" in lowered):
+    if status_code == 429 or (status_code == 502 and ("429" in lowered or "rate" in lowered or "quota" in lowered)):
         return "The model provider is rate-limited. Try again in a moment."
 
     if status_code == 404:

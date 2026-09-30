@@ -190,7 +190,7 @@ class CriticAgent:
             f"PARSED VIBE INTENT:\n{json.dumps(intent_dict, indent=2, ensure_ascii=True)}\n\n"
             f"PLAYLIST STRATEGY USED:\n{json.dumps(strategy_dict, indent=2, ensure_ascii=True)}\n\n"
             f"RESULTING PLAYLIST ({len(slim_playlist)} tracks):\n"
-            f"{json.dumps(slim_playlist, indent=2, ensure_ascii=True)}\n\n"
+            f"{json.dumps(slim_playlist, separators=(',', ':'), ensure_ascii=True)}\n\n"
             "Evaluate the playlist and output the CriticReport JSON."
         )
 

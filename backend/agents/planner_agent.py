@@ -27,6 +27,10 @@ class RetrievalLimits:
                 raise ValueError(f"retrieval_limits.{attr} must be an int between 5 and 500, got {v!r}")
 
 
+# Temporary: keeps requests inside Groq's free-tier 8K TPM while testing. Remove for real use.
+TESTING_PLAYLIST_SIZE_CAP = 5
+
+
 @dataclass
 class PlaylistPlan:
     """
@@ -373,6 +377,7 @@ class PlannerAgent:
             rationale=str(data.get("rationale", "")).strip(),
         )
         plan.validate()
+        plan.playlist_size = min(plan.playlist_size, TESTING_PLAYLIST_SIZE_CAP)
         return plan
 
 

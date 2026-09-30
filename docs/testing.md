@@ -17,7 +17,7 @@ Coverage includes:
 
 - JSON mode remains enabled across parser, planner, builder, critic, and repair attempts.
 - Empty, truncated, malformed, provider-rejected JSON and invalid fields trigger bounded repair attempts (three total attempts per agent by default).
-- Provider 429 errors propagate separately; they do not become JSON repairs or ranked-track fallbacks.
+- Provider 429 errors are retried inside `LLMClient` (up to 3 attempts, `time.sleep` patched in tests); they never become JSON repairs or ranked-track fallbacks, and exhausted retries surface as API 429.
 - Immediate acceptance, rejection followed by feedback-driven replanning, and exhausted critic retries.
 - Final rejection returns 422; empty candidates return 404.
 - Builder fallback is reviewed by the critic and appears in debug output; flags reset after a successful later pass.
@@ -50,7 +50,8 @@ Use plain URLs, not pasted Markdown link syntax. Live calls use the configured G
 | Prompt parsing exhausted | 422 with string `detail` |
 | Invalid request body | 422 with FastAPI validation details (a list) |
 | Planner/critic output validation exhausted | 502 with string `detail` |
-| Groq failure, including upstream 429 | Currently 502 with string `detail` describing the upstream failure |
+| Groq rate limit (429) after retries | 429 with string `detail`; the frontend shows a rate-limit message |
+| Other Groq failure | 502 with string `detail` describing the upstream failure |
 | Missing LLM configuration or unavailable database | 503 |
 | Unexpected application failure | 500 |
 
@@ -69,7 +70,7 @@ In both cases used plus requested exceeded the reported allowance. Groq returned
 
 `GROQ_MAX_TOKENS` sets a completion ceiling per call, not a total workflow allowance. Increasing it can help output truncation but does not increase the account quota. Several agents and critic retries share that quota. Restarting Uvicorn does not reset it. Waiting the provider-specified interval permits another attempt but does not guarantee the entire multi-call workflow will finish within quota.
 
-Application-level 429 backoff and per-agent token budgets are intentionally deferred. Strict exclusion enforcement and metadata enrichment are also deferred; see [future work](future.md).
+As of 2026-09-30, bounded 429 retry (3 attempts, `retry-after` honored, 20s cap) is implemented and token volume was cut (pool and playlist size capped at 5 for testing, compact JSON, `reasoning_effort=low`); parser/planner run on `gpt-oss-20b` and builder/critic on `gpt-oss-120b`. Per-agent token budgets remain deferred. Strict exclusion enforcement and metadata enrichment are also deferred; see [future work](future.md).
 
 ## Diagnostics
 

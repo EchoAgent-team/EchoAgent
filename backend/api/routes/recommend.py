@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from backend.agents.critic_agent import CriticAgent
 from backend.agents.planner_agent import PlannerAgent
 from backend.agents.playlist_builder import PlaylistBuilderAgent
 from backend.agents.playlist_graph import run_playlist_graph
@@ -30,7 +31,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 def get_llm_client(request: Request) -> Any:
-    client = getattr(request.app.state, "llm_client", None)
+    client = getattr(request.app.state, "light_llm_client", None)
     if client is None:
         raise HTTPException(status_code=503, detail="LLM client is not configured (missing GROQ_API_KEY).")
     return client
@@ -47,6 +48,13 @@ def get_playlist_builder_agent(request: Request) -> PlaylistBuilderAgent:
     agent = getattr(request.app.state, "playlist_builder_agent", None)
     if agent is None:
         raise HTTPException(status_code=503, detail="Playlist builder agent is not configured (missing GROQ_API_KEY).")
+    return agent
+
+
+def get_critic_agent(request: Request) -> CriticAgent:
+    agent = getattr(request.app.state, "critic_agent", None)
+    if agent is None:
+        raise HTTPException(status_code=503, detail="Critic agent is not configured (missing GROQ_API_KEY).")
     return agent
 
 
@@ -146,6 +154,9 @@ def _classify_error(exc: Exception) -> HTTPException:
     if module.startswith("sqlalchemy"):
         return HTTPException(status_code=503, detail=f"Relational database is unavailable: {message}")
 
+    if type(exc).__name__ == "RateLimitError" and module.startswith("groq"):
+        return HTTPException(status_code=429, detail=f"LLM provider rate limit reached: {message}")
+
     if module.startswith("groq"):
         return HTTPException(status_code=502, detail=f"LLM request failed: {message}")
 
@@ -169,6 +180,7 @@ def recommend(
     llm_client: Any = Depends(get_llm_client),
     planner_agent: PlannerAgent = Depends(get_planner_agent),
     playlist_builder_agent: PlaylistBuilderAgent = Depends(get_playlist_builder_agent),
+    critic_agent: CriticAgent = Depends(get_critic_agent),
     prompt_schema_path: str = Depends(get_prompt_schema_path),
     database_url: Optional[str] = Depends(get_database_url),
     chroma_persist_directory: Optional[str] = Depends(get_chroma_persist_directory),
@@ -185,6 +197,7 @@ def recommend(
             prompt_parser=prompt_parser,
             planner_agent=planner_agent,
             playlist_builder_agent=playlist_builder_agent,
+            critic_agent=critic_agent,
             database_url=database_url,
             chroma_persist_directory=chroma_persist_directory,
         )

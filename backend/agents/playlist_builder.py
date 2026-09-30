@@ -26,7 +26,7 @@ from backend.agents.vibe_intent import VibeIntent
 from backend.agents.planner_agent import PlaylistPlan
 
 
-POOL_SIZE = 20
+POOL_SIZE = 5  # temporary, for free-tier testing
 logger = logging.getLogger(__name__)
 DEFAULT_ENERGY_ARC = (
     "start with medium-energy tracks, build toward high energy in the middle, "
@@ -285,7 +285,7 @@ class PlaylistBuilderAgent:
             f"VIBE INTENT:\n{json.dumps(intent_dict, indent=2, ensure_ascii=True)}\n\n"
             f"PLAYLIST STRATEGY:\n{json.dumps(strategy_dict, indent=2, ensure_ascii=True)}\n\n"
             f"CANDIDATE POOL ({len(pool)} tracks, ordered by relevance score):\n"
-            f"{json.dumps(pool, indent=2, ensure_ascii=True)}\n\n"
+            f"{json.dumps(pool, separators=(',', ':'), ensure_ascii=True)}\n\n"
             f"Select exactly {playlist_plan.playlist_size} tracks and order them. "
             "Output the PlaylistBuilder JSON."
         )
